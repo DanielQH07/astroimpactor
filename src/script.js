@@ -43,6 +43,17 @@ function auToOrbitRadius(au) {
     return au * 150;
 }
 
+// === Scene/physics scaling helpers ===
+const AU_KM = 149_597_870;                                // km
+const KM_PER_SU = AU_KM / auToOrbitRadius(1);             // 1 scene-unit = ~AU/150 km
+let   TIME_SCALE = 5e5;                                    // 1s mô phỏng = 500,000s thật (tuỳ chỉnh GUI)
+function vrelToOmega(v_kmps, r_su){
+  // v [km/s] -> v_scene [su/s] -> omega [rad/s]
+  const v_su_per_s = (v_kmps / KM_PER_SU) * TIME_SCALE;
+  return v_su_per_s / Math.max(r_su, 1e-6);
+}
+
+
 // Solve Kepler's Equation (M -> E) using simple iteration
 function solveKepler(M, e, tolerance = 1e-6) {
     let E = M;
@@ -109,30 +120,69 @@ function createNoisyRock(radius = 1, detail = 3) {
 }
 
 function createAsteroidMesh(elements) {
-    const size = THREE.MathUtils.randFloat(1, 2);
-    const geometry = createNoisyRock(size);
-    const material = new THREE.MeshStandardMaterial({ color: 0x888888 });
-    const mesh = new THREE.Mesh(geometry, material);
+  const size = THREE.MathUtils.randFloat(1, 2);
+  const geometry = createNoisyRock(size);
+  const material = new THREE.MeshStandardMaterial({ color: 0x888888 });
+  const mesh = new THREE.Mesh(geometry, material);
 
-    // Compute initial true anomaly from mean anomaly (approximation for small e)
-    const M = THREE.MathUtils.degToRad(elements["mean anomaly"]);
-    const E = solveKepler(M, elements.e);
-    const nu = 2 * Math.atan2(Math.sqrt(1+elements.e)*Math.sin(E/2), Math.sqrt(1-elements.e)*Math.cos(E/2));
+  // ---- Kepler at epoch (giữ nguyên như cũ) ----
+  const M = THREE.MathUtils.degToRad(elements["mean anomaly"]);
+  const E = solveKepler(M, elements.e);
+  const nu = 2 * Math.atan2(Math.sqrt(1+elements.e)*Math.sin(E/2), Math.sqrt(1-elements.e)*Math.cos(E/2));
+  const position = orbitalElementsToPosition(elements, nu);
+  mesh.position.copy(position);
 
-    const position = orbitalElementsToPosition(elements, nu);
-    mesh.position.copy(position);
+  // ---- Gán định danh để match riskData ----
+  const id = (elements.Name ?? elements["Num/des."] ?? "").toString();
+  mesh.name = id || "Unnamed";
 
-    // Save orbital data for animation
-    mesh.userData = {
-        elements,
-        meanAnomaly: M,
-        orbitSpeed: 0.00005 + Math.random() * 0.0001, // arbitrary speed factor
-        eccentricAnomaly: E
+  // ---- Mặc định orbitSpeed cũ (random nhẹ) ----
+  let orbitSpeed = 0.00005 + Math.random() * 0.0001;
+
+  // ---- Nếu có risk → tính orbitSpeed từ Vel km/s ----
+  const risk = riskById[id];
+  if (risk) {
+    const vRel = Number(risk["Vel km/s"]) || 0;
+    const r_su = mesh.position.length();                 // bán kính quỹ đạo đang hiển thị (scene units)
+    const omega = vrelToOmega(vRel, r_su);               // rad/s
+    orbitSpeed = omega;                                  // dùng làm tốc độ góc
+
+    // Tô màu theo PS cum
+    const psCum = Number(risk["PS cum"]);
+    if (psCum > 0) {
+      mesh.material.color.setHex(0xff0000);
+      mesh.material.emissive = new THREE.Color(0xaa0000);
+      mesh.material.emissiveIntensity = 0.35;
+    } else if (psCum > -1) {
+      mesh.material.color.setHex(0xff7f00);
+    } else if (psCum > -2) {
+      mesh.material.color.setHex(0xffbf00);
+    } else {
+      mesh.material.color.setHex(0x00a2ff);
+    }
+
+    // Lưu metadata để hover/tooltip/legend
+    mesh.userData.risk = {
+      id, vRelKmps: vRel,
+      psMax: risk["PS max"], psCum: risk["PS cum"],
+      ipMax: risk["IP max"], ipCum: risk["IP cum"],
+      date: risk["Date/Time"], years: risk["Years"]
     };
+  }
 
-    scene.add(mesh);
-    return mesh;
+  // ---- Lưu lại để animate ----
+  mesh.userData = {
+    ...mesh.userData,
+    elements,
+    meanAnomaly: M,
+    eccentricAnomaly: E,
+    orbitSpeed                    // <-- giờ đã là omega (rad/s) nếu có risk
+  };
+
+  scene.add(mesh);
+  return mesh;
 }
+
 
 
 
@@ -203,7 +253,8 @@ customContainer.appendChild(gui.domElement);
 const settings = {
   accelerationOrbit: 1,
   acceleration: 1,
-  sunIntensity: 1.9
+  sunIntensity: 1.9,
+  timeScale: TIME_SCALE
 };
 
 gui.add(settings, 'accelerationOrbit', 0, 10).onChange(value => {
@@ -213,6 +264,8 @@ gui.add(settings, 'acceleration', 0, 10).onChange(value => {
 gui.add(settings, 'sunIntensity', 1, 10).onChange(value => {
   sunMat.emissiveIntensity = value;
 });
+gui.add(settings, 'timeScale', 1e4, 2e6).onChange(v => { TIME_SCALE = v; });
+
 
 // mouse movement
 const raycaster = new THREE.Raycaster();
@@ -805,21 +858,63 @@ const orbitalData = [
   }
 ];
 
-const riskData = [
-  {
-    "Num/des.": "2023VD3",
-    "IP max": 0.00235,
-    "PS max": -2.67,
-    "m": 14.0
-  },
-  {
-    "Num/des.": "433",
-    "IP max": 1e-5,
-    "PS max": -1.5,
-    "m": 10.83
-  }
-];
+// const riskData = [
+//   {
+//     "Num/des.": "2023VD3",
+//     "Name": null,
+//     "m": 14.0,
+//     "*=Y": "*",
+//     "Date/Time": "2034-11-08T17:08:00Z",
+//     "IP max": 0.00235,
+//     "PS max": -2.67,
+//     "TS": 0,
+//     "Vel km/s": 21.01,
+//     "Years": "2034-2039",
+//     "IP cum": 0.00235,
+//     "PS cum": -2.67
+//   },
+//   {
+//     "Num/des.": "2008JL3",
+//     "Name": null,
+//     "m": 30.0,
+//     "*=Y": "*",
+//     "Date/Time": "2027-05-01T09:05:00Z",
+//     "IP max": 0.000149,
+//     "PS max": -2.73,
+//     "TS": 0,
+//     "Vel km/s": 14.01,
+//     "Years": "2027-2122",
+//     "IP cum": 0.000161,
+//     "PS cum": -2.73
+//   }
+// ];
 
+let riskData = [];
+
+async function loadRiskData() {
+  try {
+    const response = await fetch("esa_risk_list_0.json");
+    if (!response.ok) throw new Error("Failed to fetch JSON file");
+
+    const json = await response.json();
+
+    // ✅ Không map, không đổi key — lấy nguyên gốc:
+    if (json && Array.isArray(json.data)) {
+      riskData = json.data;
+    } else {
+      console.warn("⚠️ JSON file does not contain a valid 'data' array.");
+      riskData = [];
+    }
+
+    console.log("✅ Loaded riskData:", riskData);
+  } catch (err) {
+    console.error("❌ Failed to load risk data:", err);
+  }
+}
+
+const riskById = Object.fromEntries(
+  riskData.map(r => [r["Num/des."].toString(), r])
+);
 
 // Add asteroids and orbits
     const visualAsteroids = asteroidElements.map(el => {
@@ -846,34 +941,6 @@ function loadObject(path, position, scale, callback) {
       console.error('An error happened', error);
   });
 }
-
-// ******  ASTEROIDS  ******
-// const asteroids = [];
-// function loadAsteroids(path, numberOfAsteroids, minOrbitRadius, maxOrbitRadius) {
-//   const loader = new GLTFLoader();
-//   loader.load(path, function (gltf) {
-//       gltf.scene.traverse(function (child) {
-//           if (child.isMesh) {
-//               for (let i = 0; i < numberOfAsteroids / 12; i++) { // Divide by 12 because there are 12 asteroids in the pack
-//                   const asteroid = child.clone();
-//                   const orbitRadius = THREE.MathUtils.randFloat(minOrbitRadius, maxOrbitRadius);
-//                   const angle = Math.random() * Math.PI * 2;
-//                   const x = orbitRadius * Math.cos(angle);
-//                   const y = 0;
-//                   const z = orbitRadius * Math.sin(angle);
-//                   child.receiveShadow = true;
-//                   asteroid.position.set(x, y, z);
-//                   asteroid.scale.setScalar(THREE.MathUtils.randFloat(0.8, 1.2));
-//                   scene.add(asteroid);
-//                   asteroids.push(asteroid);
-//               }
-//           }
-//       });
-//   }, undefined, function (error) {
-//       console.error('An error happened', error);
-//   });
-// }
-
 
 // Earth day/night effect shader material
 const earthMaterial = new THREE.ShaderMaterial({
@@ -1276,13 +1343,6 @@ if (jupiter.moons) {
   });
 }
 
-// // Rotate asteroids
-// asteroids.forEach(asteroid => {
-//   asteroid.rotation.y += 0.0001;
-//   asteroid.position.x = asteroid.position.x * Math.cos(0.0001 * settings.accelerationOrbit) + asteroid.position.z * Math.sin(0.0001 * settings.accelerationOrbit);
-//   asteroid.position.z = asteroid.position.z * Math.cos(0.0001 * settings.accelerationOrbit) - asteroid.position.x * Math.sin(0.0001 * settings.accelerationOrbit);
-// });
-
 // ****** OUTLINES ON PLANETS ******
 raycaster.setFromCamera(mouse, camera);
 
@@ -1328,16 +1388,6 @@ if (isMovingTowardsPlanet) {
   requestAnimationFrame(animate);
   composer.render();
 
-//   visualAsteroids.forEach(ast => {
-//   ast.userData.angle += ast.userData.orbitSpeed * settings.accelerationOrbit;
-//   const r = ast.userData.orbitRadius;
-//   ast.position.x = r * Math.cos(ast.userData.angle);
-//   ast.position.z = r * Math.sin(ast.userData.angle);
-//   ast.rotation.y += 0.001; // spin the asteroid
-// });
-    asteroidObjects.forEach(({ mesh }) => {
-    updateAsteroidOrbit(mesh);
-  });
     visualAsteroids.forEach(ast => {
     const e = ast.userData.elements.e;
     const a = ast.userData.elements.a;
@@ -1365,8 +1415,6 @@ if (isMovingTowardsPlanet) {
 
 
 }
-// loadAsteroids('/asteroids/asteroidPack.glb', 1000, 130, 160);
-// loadAsteroids('/asteroids/asteroidPack.glb', 3000, 352, 370);
 animate();
 
 window.addEventListener('mousemove', onMouseMove, false);
