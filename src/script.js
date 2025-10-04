@@ -6,6 +6,7 @@ import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js'
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { OutlinePass } from 'three/addons/postprocessing/OutlinePass.js';
+import { Noise } from 'noisejs';
 
 import bgTexture1 from '/images/1.jpg';
 import bgTexture2 from '/images/2.jpg';
@@ -36,11 +37,42 @@ import uraRingTexture from '/images/uranus_ring.png';
 import neptuneTexture from '/images/neptune.jpg';
 import plutoTexture from '/images/plutomap.jpg';
 
+async function readJSON(url) {
+  const res = await fetch(url);
+  const json = await res.json();
+  return json;
+}
 
 // Convert AU to your scene units
 function auToOrbitRadius(au) {
     return au * 150;
 }
+
+// === Scene/physics scaling helpers ===
+const AU_KM = 149_597_870;                                // km
+const KM_PER_SU = AU_KM / auToOrbitRadius(1);             // 1 scene-unit = ~AU/150 km
+let   TIME_SCALE = 5e5;                                    // 1s mô phỏng = 500,000s thật (tuỳ chỉnh GUI)
+function vrelToOmega(v_kmps, r_su){
+  // v [km/s] -> v_scene [su/s] -> omega [rad/s]
+  const v_su_per_s = (v_kmps / KM_PER_SU) * TIME_SCALE;
+  return v_su_per_s / Math.max(r_su, 1e-6);
+}
+const M_PER_SU = KM_PER_SU * 1000;     // mét cho mỗi scene-unit (dựa trên AU->SU hiện có)
+const NEO_MIN_RADIUS_SU = 2;        // bán kính tối thiểu để không “biến mất” trên màn hình
+
+//For day logging
+const DAY_S = 86400;                    // seconds in a day
+function mjdToDate(mjd) {
+  // MJD epoch is 1858-11-17; Unix epoch offset is 40587 days
+  return new Date((mjd - 40587) * DAY_S * 1000);
+}
+function dateToMJD(date) {
+  return date.getTime() / 1000 / DAY_S + 40587;
+}
+let simMJD = null;
+
+// THREE clock for frame-delta based updates
+const clock = new THREE.Clock();
 
 // Solve Kepler's Equation (M -> E) using simple iteration
 function solveKepler(M, e, tolerance = 1e-6) {
@@ -74,7 +106,7 @@ function orbitalElementsToPosition(elements, trueAnomalyRad) {
     return new THREE.Vector3(x, y, z);
 }
 
-function createAsteroidOrbitLine(elements, segments = 200) {
+function createAsteroidOrbitLine(elements, segments = 600) {
     const points = [];
     for (let j = 0; j <= segments; j++) {
         const nu = 2 * Math.PI * j / segments; // true anomaly
@@ -86,31 +118,100 @@ function createAsteroidOrbitLine(elements, segments = 200) {
     return orbitLine;
 }
 
-function createAsteroidMesh(elements) {
-    const size = THREE.MathUtils.randFloat(0.5, 1.5);
-    const geometry = new THREE.SphereGeometry(size, 12, 12);
-    const material = new THREE.MeshStandardMaterial({ color: 0x888888 });
-    const mesh = new THREE.Mesh(geometry, material);
+const noise = new Noise(Math.random());
+function createNoisyRock(radius = 1, detail = 3) {
+  const geometry = new THREE.IcosahedronGeometry(radius, detail);
+  const pos = geometry.attributes.position;
 
-    // Compute initial true anomaly from mean anomaly (approximation for small e)
-    const M = THREE.MathUtils.degToRad(elements["mean anomaly"]);
-    const E = solveKepler(M, elements.e);
-    const nu = 2 * Math.atan2(Math.sqrt(1+elements.e)*Math.sin(E/2), Math.sqrt(1-elements.e)*Math.cos(E/2));
+  for (let i = 0; i < pos.count; i++) {
+    let x = pos.getX(i);
+    let y = pos.getY(i);
+    let z = pos.getZ(i);
 
-    const position = orbitalElementsToPosition(elements, nu);
-    mesh.position.copy(position);
+    const nx = noise.perlin3(x, y, z);
+    const scale = 1 + nx * 0.3; // distortion strength
 
-    // Save orbital data for animation
-    mesh.userData = {
-        elements,
-        meanAnomaly: M,
-        orbitSpeed: 0.00005 + Math.random() * 0.0001, // arbitrary speed factor
-        eccentricAnomaly: E
-    };
+    pos.setXYZ(i, x * scale, y * scale, z * scale);
+  }
 
-    scene.add(mesh);
-    return mesh;
+  pos.needsUpdate = true;
+  geometry.computeVertexNormals();
+  return geometry;
 }
+
+function createAsteroidMesh(elements) {
+  let material = new THREE.MeshStandardMaterial({ color: 0x888888 });
+
+  // ---- ID để match risk ----
+  const id = (elements.Name ?? elements["Num/des."] ?? "").toString();
+
+  // ---- Lấy size từ risk.m (diameter in meters) ----
+  const risk = riskById[id];
+  const d_m  = risk && Number.isFinite(risk.m) ? Number(risk.m) : null;
+  const baseRadiusSU = d_m ? (d_m / M_PER_SU) : THREE.MathUtils.randFloat(1, 2);
+  const radius_su    = Math.max(NEO_MIN_RADIUS_SU, baseRadiusSU);
+
+  const geometry = createNoisyRock(radius_su);
+  const mesh = new THREE.Mesh(geometry, material);
+
+  // ---- Kepler at epoch (giữ nguyên) ----
+  const M = THREE.MathUtils.degToRad(elements["mean anomaly"]);
+  const E = solveKepler(M, elements.e);
+  const nu = 2 * Math.atan2(Math.sqrt(1+elements.e)*Math.sin(E/2), Math.sqrt(1-elements.e)*Math.cos(E/2));
+  const position = orbitalElementsToPosition(elements, nu);
+  mesh.position.copy(position);
+
+  mesh.name = id || "Unnamed";
+
+  // ---- Mặc định orbitSpeed cũ ----
+  let orbitSpeed = 0.00005 + Math.random() * 0.0001;
+
+  // ---- Nếu có risk → tính orbitSpeed từ Vel km/s + tô màu theo PS cum ----
+  if (risk) {
+    const vRel = Number(risk["Vel km/s"]) || 0;
+    const r_su_orbit = mesh.position.length();
+    const omega = vrelToOmega(vRel, r_su_orbit);
+    orbitSpeed = omega;
+
+    const psCum = Number(risk["PS cum"]);
+    mesh.material = mesh.material.clone();
+    if (psCum > 0) {
+      mesh.material.color.setHex(0xff0000);
+      // tránh emissive mặc định để không “lệch ánh sáng” (nếu cần, bật khi hover)
+      mesh.material.emissive = new THREE.Color(0xaa0000);
+      mesh.material.emissiveIntensity = 0.15;
+    } else if (psCum > -1) {
+      mesh.material.color.setHex(0xff7f00);
+    } else if (psCum > -2) {
+      mesh.material.color.setHex(0xffbf00);
+    } else {
+      mesh.material.color.setHex(0x00a2ff);
+    }
+
+    mesh.userData.risk = {
+      id,
+      diameter_m: d_m,
+      vRelKmps: vRel,
+      psMax: risk["PS max"], psCum: risk["PS cum"],
+      ipMax: risk["IP max"], ipCum: risk["IP cum"],
+      date: risk["Date/Time"], years: risk["Years"]
+    };
+  }
+
+  //mesh.userData.diameter_m = d_m;
+  mesh.userData = {
+    ...mesh.userData,
+    elements,
+    meanAnomaly: M,
+    eccentricAnomaly: E,
+    orbitSpeed,
+    radius_su: radius_su
+  };
+
+  scene.add(mesh);
+  return mesh;
+}
+
 
 
 
@@ -181,9 +282,23 @@ customContainer.appendChild(gui.domElement);
 const settings = {
   accelerationOrbit: 1,
   acceleration: 1,
-  sunIntensity: 1.9
+  sunIntensity: 1.9,
+  timeScale: TIME_SCALE ?? 5e5,  // Nếu TIME_SCALE không tồn tại, mặc định là 5e5
+  filterDangerousOnly: false,
+  // Giá trị này sẽ được cập nhật mỗi khung hình cho GUI, sẽ không thay đổi trong quá trình tính toán
+  simDateISO: '',
 };
+function updateAsteroidVisibility() {
+  visualAsteroids.forEach(mesh => {
+    const isDanger = !!mesh.userData.isDanger;
+    const visible  = settings.filterDangerousOnly ? isDanger : true;
+    mesh.visible = visible;
 
+    // also toggle the orbit line tied to this mesh
+    const line = mesh.userData.orbitLine;
+    if (line) line.visible = visible;
+  });
+}
 gui.add(settings, 'accelerationOrbit', 0, 10).onChange(value => {
 });
 gui.add(settings, 'acceleration', 0, 10).onChange(value => {
@@ -191,7 +306,11 @@ gui.add(settings, 'acceleration', 0, 10).onChange(value => {
 gui.add(settings, 'sunIntensity', 1, 10).onChange(value => {
   sunMat.emissiveIntensity = value;
 });
-
+gui.add(settings, 'timeScale', 1e4, 2e6).onChange(v => { TIME_SCALE = v; });
+gui.add(settings, 'filterDangerousOnly')
+  .name('Dangerous only')
+  .onChange(updateAsteroidVisibility);
+gui.add(settings, 'simDateISO').name('Sim Date').listen();
 // mouse movement
 const raycaster = new THREE.Raycaster();
 const mouse = new THREE.Vector2();
@@ -424,422 +543,46 @@ function createPlanet(planetName, size, position, tilt, texture, bump, ring, atm
   scene.add(planet3d);
   return {name, planet, planet3d, Atmosphere, moons, planetSystem, Ring};
 }
-// // ******  ORBIT LINE FUNCTION  ******
-// function createOrbitLine(radius) {
-//   // Create an ellipse curve
-//   const orbitCurve = new THREE.EllipseCurve(
-//     0, 0,            // ax, ay (center)
-//     radius, radius,  // xRadius, yRadius
-//     0, 2 * Math.PI,  // startAngle, endAngle
-//     false,           // clockwise
-//     0                // rotation
-//   );
 
-//   // Get points from the curve
-//   const points = orbitCurve.getPoints(100);
-//   const geometry = new THREE.BufferGeometry().setFromPoints(points);
+let data = await readJSON('/data/cur_epoch_kep.json');
+const asteroidElements = data["data"];
+const firstWithEpoch = asteroidElements.find(e => e['Epoch(MJD)'] != null);
+const epochMJD = firstWithEpoch ? Number(firstWithEpoch['Epoch(MJD)']) : 59600; // fallback
+simMJD = epochMJD;
+settings.simDateISO = mjdToDate(simMJD).toISOString().slice(0, 19) + 'Z';
 
-//   // Create the line material
-//   const material = new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.1 });
+data = await readJSON('/data/esa_risk_list_0.json');
+const riskData = data["data"]; // array
 
-//   // Create the line
-//   const orbitLine = new THREE.LineLoop(geometry, material);
-//   orbitLine.rotation.x = Math.PI / 2; // rotate to lie flat on XZ plane
-
-//   return orbitLine;
-// }
-
-
-// // Example asteroid data (mimicking your ESA JSON)
-// const testAsteroids = [
-//   { "Num/des.": "2025RX3", "Name": null, "km": 5777495, "au": 0.03862 },
-//   { "Num/des.": "2025AB1", "Name": "TestAsteroid1", "km": 12000000, "au": 0.07 },
-//   { "Num/des.": "2025CD2", "Name": "TestAsteroid2", "km": 8000000, "au": 0.05 }
-// ];
-
-
-// function kmToOrbitRadius(km) {
-//   // Map km to a reasonable Three.js scale for your solar system
-//   // Example: divide by 100000 to scale down to your scene
-//   return km / 100000;
-// }
-
-
-// function createTestAsteroids(data) {
-//   const asteroidMeshes = [];
-
-//   data.forEach(item => {
-//     const size = THREE.MathUtils.randFloat(0.5, 1.5); // random small asteroid size
-//     const geometry = new THREE.SphereGeometry(size, 12, 12);
-//     const material = new THREE.MeshStandardMaterial({ color: 0x888888 });
-//     const mesh = new THREE.Mesh(geometry, material);
-
-//     // Random position along circular orbit
-//     const orbitRadius = kmToOrbitRadius(item.km);
-//     const angle = Math.random() * Math.PI * 2;
-//     mesh.position.set(
-//       orbitRadius * Math.cos(angle),
-//       0,
-//       orbitRadius * Math.sin(angle)
-//     );
-
-//     // Save some orbit info for animation
-//     mesh.userData = {
-//       orbitRadius,
-//       orbitSpeed: THREE.MathUtils.randFloat(0.00005, 0.0002),
-//       angle
-//     };
-    
-//     // Add orbit line
-//     const orbitLine = createOrbitLine(orbitRadius);
-//     scene.add(orbitLine);
-
-//     scene.add(mesh);
-//     asteroidMeshes.push(mesh);
-//   });
-
-//   return asteroidMeshes;
-// }
-
-// const visualAsteroids = createTestAsteroids(testAsteroids);
-
-const asteroidElements = [
-    {
-      "Name": "433",
-      "Epoch(MJD)": 61000.0,
-      "a": 1.458120999506171,
-      "e": 0.22283594601507883,
-      "i": 10.828468305381943,
-      "long. node": 304.27008647666185,
-      "arg. peric.": 178.92977480134164,
-      "mean anomaly": 310.5543217456213,
-      "absolute magnitude": 10.83,
-      "slope param": 0.46,
-      "non-grav param": 0.0
-    },
-    {
-      "Name": "719",
-      "Epoch(MJD)": 61000.0,
-      "a": 2.6365903926527463,
-      "e": 0.5465957998814123,
-      "i": 11.573112309302102,
-      "long. node": 183.86097652162428,
-      "arg. peric.": 156.18939590382544,
-      "mean anomaly": 240.61027373981472,
-      "absolute magnitude": 15.59,
-      "slope param": 0.15,
-      "non-grav param": 0.0
-    },
-    {
-      "Name": "887",
-      "Epoch(MJD)": 61000.0,
-      "a": 2.473628779117842,
-      "e": 0.5711699796054409,
-      "i": 9.400059649057418,
-      "long. node": 110.40587020339058,
-      "arg. peric.": 350.5345082242698,
-      "mean anomaly": 81.54059287446157,
-      "absolute magnitude": 13.41,
-      "slope param": -0.12,
-      "non-grav param": 0.0
-    },
-    {
-      "Name": "1036",
-      "Epoch(MJD)": 61000.0,
-      "a": 2.664968843719615,
-      "e": 0.5332132821051266,
-      "i": 26.68073815746113,
-      "long. node": 215.4411761752794,
-      "arg. peric.": 132.5031283117107,
-      "mean anomaly": 97.59385210593904,
-      "absolute magnitude": 9.42,
-      "slope param": 0.3,
-      "non-grav param": 0.0
-    },
-    {
-      "Name": "1221",
-      "Epoch(MJD)": 61000.0,
-      "a": 1.9198312596733018,
-      "e": 0.4346323443728749,
-      "i": 11.868824208523039,
-      "long. node": 171.2371784750223,
-      "arg. peric.": 26.758232224476295,
-      "mean anomaly": 59.8704883740864,
-      "absolute magnitude": 17.48,
-      "slope param": 0.15,
-      "non-grav param": 1.0
-    },
-    {
-      "Name": "1566",
-      "Epoch(MJD)": 61000.0,
-      "a": 1.0780378365881251,
-      "e": 0.8270056950392995,
-      "i": 22.803209459601593,
-      "long. node": 87.9524222424455,
-      "arg. peric.": 31.438211624784284,
-      "mean anomaly": 153.0789340502513,
-      "absolute magnitude": 16.53,
-      "slope param": 0.15,
-      "non-grav param": 1.0
-    },
-    {
-      "Name": "1580",
-      "Epoch(MJD)": 61000.0,
-      "a": 2.194974311417404,
-      "e": 0.48760449969698316,
-      "i": 52.18784240299455,
-      "long. node": 62.22484446727139,
-      "arg. peric.": 159.71705898987912,
-      "mean anomaly": 80.2671788024341,
-      "absolute magnitude": 14.41,
-      "slope param": 0.0,
-      "non-grav param": 0.0
-    },
-    {
-      "Name": "1620",
-      "Epoch(MJD)": 61000.0,
-      "a": 1.2457769317898977,
-      "e": 0.33551220254788233,
-      "i": 13.335799031675021,
-      "long. node": 337.14079624981224,
-      "arg. peric.": 277.0183847246366,
-      "mean anomaly": 212.92043907640672,
-      "absolute magnitude": 15.19,
-      "slope param": 0.15,
-      "non-grav param": 0.0
-    },
-    {
-      "Name": "1627",
-      "Epoch(MJD)": 61000.0,
-      "a": 1.863058083818032,
-      "e": 0.3973228594998501,
-      "i": 8.456294008481485,
-      "long. node": 133.07464261001286,
-      "arg. peric.": 167.83957695383086,
-      "mean anomaly": 311.46100501539354,
-      "absolute magnitude": 13.23,
-      "slope param": 0.6,
-      "non-grav param": 0.0
-    },
-    {
-      "Name": "1685",
-      "Epoch(MJD)": 61000.0,
-      "a": 1.367838675348063,
-      "e": 0.43604874426849216,
-      "i": 9.381838169400266,
-      "long. node": 274.20773766495824,
-      "arg. peric.": 127.27531252931306,
-      "mean anomaly": 82.6816306489443,
-      "absolute magnitude": 14.31,
-      "slope param": 0.15,
-      "non-grav param": 1.0
-    },
-    {
-      "Name": "1862",
-      "Epoch(MJD)": 61000.0,
-      "a": 1.4709238009878445,
-      "e": 0.5599179890673649,
-      "i": 6.351395187437802,
-      "long. node": 35.541633413239644,
-      "arg. peric.": 286.050885529785,
-      "mean anomaly": 113.88453720578651,
-      "absolute magnitude": 16.1,
-      "slope param": 0.09,
-      "non-grav param": 1.0
-    },
-    {
-      "Name": "1863",
-      "Epoch(MJD)": 61000.0,
-      "a": 2.26011581655056,
-      "e": 0.6062664732871065,
-      "i": 18.37865547581152,
-      "long. node": 345.5512135580062,
-      "arg. peric.": 269.07454245761545,
-      "mean anomaly": 289.5644847842388,
-      "absolute magnitude": 15.41,
-      "slope param": 0.15,
-      "non-grav param": 0.0
-    },
-    {
-      "Name": "1864",
-      "Epoch(MJD)": 61000.0,
-      "a": 1.460839442960927,
-      "e": 0.6144458371232455,
-      "i": 22.216868870659873,
-      "long. node": 6.596996628808989,
-      "arg. peric.": 325.6617982434088,
-      "mean anomaly": 257.570843952816,
-      "absolute magnitude": 14.81,
-      "slope param": 0.15,
-      "non-grav param": 0.0
-    },
-    {
-      "Name": "1865",
-      "Epoch(MJD)": 61000.0,
-      "a": 1.0799733837324959,
-      "e": 0.46686046594392006,
-      "i": 16.10114595643584,
-      "long. node": 212.88454623240477,
-      "arg. peric.": 325.2894412381485,
-      "mean anomaly": 319.67477451747055,
-      "absolute magnitude": 16.73,
-      "slope param": 0.15,
-      "non-grav param": 1.0
-    },
-    {
-      "Name": "1866",
-      "Epoch(MJD)": 61000.0,
-      "a": 1.8933719415280073,
-      "e": 0.5381207017123874,
-      "i": 41.20631818869814,
-      "long. node": 63.44668344780533,
-      "arg. peric.": 293.09863395874635,
-      "mean anomaly": 140.66424150424692,
-      "absolute magnitude": 12.47,
-      "slope param": 0.15,
-      "non-grav param": 0.0
-    },
-    {
-      "Name": "1915",
-      "Epoch(MJD)": 61000.0,
-      "a": 2.5448411770322803,
-      "e": 0.5702246156919025,
-      "i": 20.39923198348801,
-      "long. node": 162.92164295069637,
-      "arg. peric.": 347.7552335475133,
-      "mean anomaly": 21.616518383131375,
-      "absolute magnitude": 18.8,
-      "slope param": 0.1,
-      "non-grav param": 0.0
-    },
-    {
-      "Name": "1916",
-      "Epoch(MJD)": 61000.0,
-      "a": 2.2726664566757226,
-      "e": 0.44917615221265306,
-      "i": 12.877115972155643,
-      "long. node": 340.59538089555343,
-      "arg. peric.": 335.8547818300756,
-      "mean anomaly": 35.111286257875456,
-      "absolute magnitude": 14.97,
-      "slope param": 0.15,
-      "non-grav param": 0.0
-    },
-    {
-      "Name": "1917",
-      "Epoch(MJD)": 61000.0,
-      "a": 2.149051310342094,
-      "e": 0.5055378485745342,
-      "i": 23.958776685519528,
-      "long. node": 188.2748781439588,
-      "arg. peric.": 194.5525806090499,
-      "mean anomaly": 160.0895145922736,
-      "absolute magnitude": 14.39,
-      "slope param": 0.15,
-      "non-grav param": 0.0
-    },
-    {
-      "Name": "1943",
-      "Epoch(MJD)": 61000.0,
-      "a": 1.4305268293371174,
-      "e": 0.2559124835463438,
-      "i": 8.707709228878453,
-      "long. node": 246.2935053939628,
-      "arg. peric.": 338.4365858205865,
-      "mean anomaly": 260.37411624106034,
-      "absolute magnitude": 15.7,
-      "slope param": 0.15,
-      "non-grav param": 0.0
-    },
-    {
-      "Name": "1980",
-      "Epoch(MJD)": 61000.0,
-      "a": 1.7093942043849362,
-      "e": 0.36470582264664675,
-      "i": 26.86994216255578,
-      "long. node": 246.54264055707145,
-      "arg. peric.": 115.47249206867848,
-      "mean anomaly": 211.4954153418843,
-      "absolute magnitude": 13.8,
-      "slope param": 0.15,
-      "non-grav param": 0.0
-    },
-    {
-      "Name": "1981",
-      "Epoch(MJD)": 61000.0,
-      "a": 1.7762715059614254,
-      "e": 0.6504955759732763,
-      "i": 39.82338336270372,
-      "long. node": 356.7939191458197,
-      "arg. peric.": 267.8442343699835,
-      "mean anomaly": 65.34754312393206,
-      "absolute magnitude": 15.29,
-      "slope param": 0.15,
-      "non-grav param": 0.0
-    },
-    {
-      "Name": "2059",
-      "Epoch(MJD)": 61000.0,
-      "a": 2.641826221246664,
-      "e": 0.5315840522686455,
-      "i": 11.020858628854743,
-      "long. node": 200.69134971959113,
-      "arg. peric.": 192.45596381275297,
-      "mean anomaly": 143.16190080130897,
-      "absolute magnitude": 15.99,
-      "slope param": 0.15,
-      "non-grav param": 0.0
-    },
-    {
-      "Name": "2061",
-      "Epoch(MJD)": 61000.0,
-      "a": 2.265256669168391,
-      "e": 0.5355996733010038,
-      "i": 3.8004736908229777,
-      "long. node": 207.35034087929995,
-      "arg. peric.": 157.10640569802723,
-      "mean anomaly": 38.88742429900803,
-      "absolute magnitude": 16.62,
-      "slope param": 0.15,
-      "non-grav param": 0.0
-    },
-    {
-      "Name": "2062",
-      "Epoch(MJD)": 61000.0,
-      "a": 0.9669585133422667,
-      "e": 0.1828994411207176,
-      "i": 18.935546626991957,
-      "long. node": 108.52821134725323,
-      "arg. peric.": 148.07631653420833,
-      "mean anomaly": 32.63777993081371,
-      "absolute magnitude": 17.09,
-      "slope param": 0.15,
-      "non-grav param": 1.0
-    },
-    {
-      "Name": "2063",
-      "Epoch(MJD)": 61000.0,
-      "a": 1.0779986359895872,
-      "e": 0.34942910507607483,
-      "i": 9.434703941141665,
-      "long. node": 33.036312684105894,
-      "arg. peric.": 55.3507188556601,
-      "mean anomaly": 234.78701502710763,
-      "absolute magnitude": 17.27,
-      "slope param": 0.15,
-      "non-grav param": 1.0
-    }
-];
+data = await readJSON('/data/esa_risk_list_1.json');
+riskData.push(...data["data"]);
+const riskById = Object.fromEntries(
+  riskData.map(r => [r["Num/des."].toString(), r])
+);
 
 // Add asteroids and orbits
-    const visualAsteroids = asteroidElements.map(el => {
-    const orbitLine = createAsteroidOrbitLine(el);
-    scene.add(orbitLine);
+const visualAsteroids = asteroidElements.map(el => {
+  const id = (el.Name ?? el["Num/des."] ?? "").toString();
+  const risk = riskById[id];
+  const isDanger = risk ? isAsteroidDangerous(risk) : false;
 
-    return createAsteroidMesh(el);
+  const orbitLine = createAsteroidOrbitLine(el);
+  orbitLine.material.color.setHex(isDanger ? 0xff0000 : 0xffff00);
+  scene.add(orbitLine);
+
+  const mesh = createAsteroidMesh(el);
+
+  mesh.userData.isDanger  = isDanger;
+  mesh.userData.orbitLine = orbitLine;
+
+  if (isDanger) {
+    mesh.material = mesh.material.clone();
+    mesh.material.color.setHex(0xff4444);
+    mesh.material.emissive = new THREE.Color(0xff0000);
+    mesh.material.emissiveIntensity = 0.3;
+  }
+  return mesh;
 });
-
-
 // ******  LOADING OBJECTS METHOD  ******
 function loadObject(path, position, scale, callback) {
   const loader = new GLTFLoader();
@@ -1073,7 +816,6 @@ const pluto = new createPlanet('Pluto', 1, 350, 57, plutoTexture)
     }
 };
 
-
 // Array of planets and atmospheres for raycasting
 const raycastTargets = [
   mercury.planet, venus.planet, venus.Atmosphere, earth.planet, earth.Atmosphere, 
@@ -1120,6 +862,21 @@ neptune.planet.receiveShadow = true;
 pluto.planet.receiveShadow = true;
 
 
+
+// -----------------------------
+// 2️⃣ Danger logic + matching
+// -----------------------------
+function isAsteroidDangerous(riskItem) {
+  const ipMax = riskItem["IP max"];
+  const psMax = riskItem["PS max"];
+  return ipMax >= 0.01 || psMax > -2;
+}
+
+const dangerousAsteroids = riskData
+  .filter(isAsteroidDangerous)
+  .map(a => a["Num/des."].toString());
+
+console.log("Dangerous asteroids:", dangerousAsteroids);
 
 
 function animate(){
@@ -1220,6 +977,7 @@ if (isMovingTowardsPlanet) {
   // Check if the camera is close to the target position
   if (camera.position.distanceTo(targetCameraPosition) < 1) {
       isMovingTowardsPlanet = false;
+      settings.accelerationOrbit = 1;
       showPlanetInfo(selectedPlanet.name);
 
   }
@@ -1233,14 +991,20 @@ if (isMovingTowardsPlanet) {
 
   controls.update();
   requestAnimationFrame(animate);
+  const delta = clock.getDelta();  // seconds since last frame
+  const tFactor = settings.timeScale * settings.accelerationOrbit; // how fast sim time moves
+
+  // Advance the simulation date (MJD) by tFactor * delta seconds
+  simMJD += (delta * tFactor) / DAY_S;
+
+  // Update the GUI string occasionally (or every frame; cheap enough)
+  settings.simDateISO = mjdToDate(simMJD).toISOString().slice(0, 19) + 'Z';
+
   composer.render();
-
     visualAsteroids.forEach(ast => {
-    const e = ast.userData.elements.e;
-    const a = ast.userData.elements.a;
-
     // Increment mean anomaly
-    ast.userData.meanAnomaly += ast.userData.orbitSpeed * settings.accelerationOrbit;
+    ast.userData.meanAnomaly += ast.userData.orbitSpeed * settings.accelerationOrbit * delta;
+    const e = ast.userData.elements.e;
 
     // Solve Kepler's equation to get eccentric anomaly
     const E = solveKepler(ast.userData.meanAnomaly, e);
@@ -1255,8 +1019,6 @@ if (isMovingTowardsPlanet) {
     // Optional: spin asteroid
     ast.rotation.y += 0.001;
 });
-
-
 }
 animate();
 
