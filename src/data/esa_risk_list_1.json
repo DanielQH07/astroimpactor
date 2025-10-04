@@ -1,0 +1,29 @@
+{
+  "source": "https://neo.ssa.esa.int/PSDB-portlet/download?file=esa_special_risk_list",
+  "description": "A line with the last update date/time, followed by a table of fields delimited by pipe characters (U+007C)",
+  "timestamp": "2025-10-03T07:51:00Z",
+  "data": [
+    {
+      "Num/des.": 101955,
+      "Name": "Bennu",
+      "m": 484,
+      "*=Y": null,
+      "Date/Time": "2182-09-24 20:24",
+      "IP max": 0.00037,
+      "PS max": -1.59,
+      "TS": null,
+      "Vel km/s": 12.68
+    },
+    {
+      "Num/des.": 29075,
+      "Name": "1950DA",
+      "m": 1300,
+      "*=Y": null,
+      "Date/Time": "2880-03-16 23:48",
+      "IP max": 1.96e-05,
+      "PS max": -2.13,
+      "TS": null,
+      "Vel km/s": 17.99
+    }
+  ]
+}
