@@ -1,96 +1,5 @@
 <head>
-    <style>
-        body {
-            margin: 0;
-        }
-
-        #time {
-            position: absolute;
-            bottom: 8px;
-            left: 8px;
-            color: lightblue;
-            font-family: monospace;
-        }
-
-        /* Controls sidebar */
-        #controls {
-            position: absolute;
-            top: 16px;
-            left: 16px;
-            width: 320px;
-            max-height: calc(100vh - 32px);
-            overflow-y: auto;
-            z-index: 5;
-            padding: 12px 14px;
-            border: 1px solid rgba(255, 255, 255, 0.15);
-            border-radius: 10px;
-            background: rgba(10, 16, 28, 0.6);
-            box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
-            color: #e6eefc;
-            font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
-            backdrop-filter: blur(6px);
-        }
-
-        #controls h3 {
-            margin: 4px 0 10px;
-            font-size: 18px;
-            letter-spacing: .5px;
-            text-align: center;
-        }
-
-        .row {
-            display: grid;
-            grid-template-columns: 1fr 96px;
-            gap: 8px;
-            align-items: center;
-            margin: 8px 0;
-        }
-
-        .row>.full {
-            grid-column: 1 / -1;
-        }
-
-        .label {
-            font-size: 12px;
-            opacity: .85;
-            margin-bottom: 4px;
-        }
-
-        input[type="number"],
-        select {
-            width: 100%;
-            padding: 8px 10px;
-            border-radius: 6px;
-            border: 1px solid rgba(255, 255, 255, 0.16);
-            background: rgba(255, 255, 255, 0.06);
-            color: #e6eefc;
-            outline: none;
-        }
-
-        input[type="range"] {
-            width: 100%;
-        }
-
-        .muted {
-            opacity: .75;
-            font-size: 12px;
-        }
-
-        #simulateBtn {
-            width: 100%;
-            margin-top: 10px;
-            padding: 10px 12px;
-            border-radius: 8px;
-            border: 1px solid rgba(255, 255, 255, 0.2);
-            background: linear-gradient(180deg, #1d3a64, #112746);
-            color: #fff;
-            cursor: pointer;
-        }
-
-        #simulateBtn:hover {
-            filter: brightness(1.08);
-        }
-    </style>
+    <link rel="stylesheet" href="style.css" />
 
     <script src="//cdn.jsdelivr.net/npm/globe.gl"></script>
     <!--  <script src="../../dist/globe.gl.js"></script>-->
@@ -101,7 +10,11 @@
     <div id="controls">
         <h3>Impact Controls</h3>
 
-        <div class="label">Projectile Diameter</div>
+        <div class="label">
+            Projectile Diameter
+            <span class="info" data-tip-title="Projectile Diameter"
+                data-tip="The size across the asteroid. Larger diameter increases volume ~ d³, mass, and impact energy very quickly."></span>
+        </div>
         <div class="row">
             <input id="ui-diameter" type="number" min="1" step="1" value="2300" />
             <select id="ui-unit">
@@ -110,31 +23,51 @@
             </select>
         </div>
 
-        <div class="label">Density (kg/m³)</div>
+        <div class="label">
+            Density (kg/m³)
+            <span class="info" data-tip-title="Density"
+                data-tip="Material heaviness. Higher density means more mass for the same size, so the impact is more energetic."></span>
+        </div>
         <div class="row">
             <input id="ui-density" type="number" min="500" step="10" value="2750" class="full" />
         </div>
 
         <hr style="border-color: rgba(255,255,255,0.1); margin: 10px 0;">
 
-        <div class="label">Impact Angle: <span id="ui-angleOut" class="muted">45°</span></div>
+        <div class="label">
+            Impact Angle: <span id="ui-angleOut" class="muted">45°</span>
+            <span class="info" data-tip-title="Impact Angle"
+                data-tip="Angle above the ground at the impact point. 0° is a skim across the surface, 90° is straight down. It also sets the approach direction in the animation."></span>
+        </div>
         <div class="row">
             <input id="ui-angle" type="range" min="0" max="90" step="1" value="45" class="full" />
         </div>
 
-        <div class="label">Velocity: <span id="ui-velOut" class="muted">20 km/s</span></div>
+        <div class="label">
+            Velocity: <span id="ui-velOut" class="muted">20 km/s</span>
+            <span class="info" data-tip-title="Velocity"
+                data-tip="Entry speed (km/s). Impact energy grows with v², so small changes in speed can greatly change the blast."></span>
+        </div>
         <div class="row">
             <input id="ui-vel" type="range" min="11" max="72" step="1" value="20" class="full" />
         </div>
 
         <hr style="border-color: rgba(255,255,255,0.1); margin: 10px 0;">
 
-        <div class="label">Latitude (°)</div>
+        <div class="label">
+            Latitude (°)
+            <span class="info" data-tip-title="Latitude"
+                data-tip="North-south location of the impact. Positive is Northern Hemisphere, negative is Southern Hemisphere."></span>
+        </div>
         <div class="row">
             <input id="ui-lat" type="number" min="-90" max="90" step="0.1" value="0" class="full" />
         </div>
 
-        <div class="label">Longitude (°)</div>
+        <div class="label">
+            Longitude (°)
+            <span class="info" data-tip-title="Longitude"
+                data-tip="East-west location of the impact. Positive is Eastern Hemisphere, negative is Western Hemisphere."></span>
+        </div>
         <div class="row">
             <input id="ui-lng" type="number" min="-180" max="180" step="0.1" value="0" class="full" />
         </div>
@@ -516,9 +449,15 @@
             let approachDir = null;     // THREE.Vector3 (unit)
             let approachLen = 0;        // scalar
             let approachProgress = 0;   // distance traveled along the line
-            const LINEAR_SPEED = 0.6;   // radii per second (constant, independent of angle)
+            // Replace fixed speed with slider-driven speed
             const R = 1;                // globe radius in world units for conversion
-
+            const BASE_RPS = 0.6, V0_KMS = 20; // 0.6 radii/s at 20 km/s baseline
+            let approachSpeedRps = BASE_RPS;
+            function recomputeApproachSpeed() {
+                const v = Number(els.vel?.value ?? ui.velocityKms); // km/s from UI
+                const mul = Math.pow(v / V0_KMS, 0.8);              // responsive but not extreme
+                approachSpeedRps = Math.min(2.5, Math.max(0.2, BASE_RPS * mul));
+            }
             function lngLatToVec(lngDeg, latDeg) {
                 const toRad = Math.PI / 180;
                 const φ = latDeg * toRad, λ = lngDeg * toRad;
@@ -571,6 +510,7 @@
             // Initial placement from UI + angle
             applyImpactFromUI();
             setupStraightApproach();
+            recomputeApproachSpeed(); // NEW: set initial speed from slider
             world.objectsData(objects);
 
             // Explosion group (built on impact)
@@ -703,6 +643,7 @@
                 // Reset straight-line approach
                 objects.length = 0;
                 setupStraightApproach();
+                recomputeApproachSpeed(); // NEW: refresh speed from current slider
                 objects.push(asteroid);
                 world.objectsData(objects);
 
@@ -720,6 +661,77 @@
                 }
             });
 
+            // NEW: update speed live when Velocity slider changes (before impact)
+            els.vel.addEventListener('input', () => {
+                if (!hasImpacted) recomputeApproachSpeed();
+            });
+
+            // --- Add Tunguska marker (DOM-based popup) ---
+            const TUNGUSKA = { lat: 60 + 55 / 60, lng: 101 + 57 / 60, id: 'tunguska' };
+
+            // Helper to fill UI and run the simulation with preset Tunguska params
+            function runTunguskaSimulation() {
+                // Prefill UI as in your screenshot/baseline
+                els.diameter.value = '60';
+                els.unit.value = 'm';
+                els.density.value = '2750';
+                els.angle.value = '45';
+                els.vel.value = '20';
+                els.lat.value = TUNGUSKA.lat.toFixed(4);
+                els.lng.value = TUNGUSKA.lng.toFixed(4);
+
+                // Update labels and slider fill via existing listeners
+                els.angle.dispatchEvent(new Event('input', { bubbles: true }));
+                els.vel.dispatchEvent(new Event('input', { bubbles: true }));
+                els.diameter.dispatchEvent(new Event('change', { bubbles: true }));
+                els.unit.dispatchEvent(new Event('change', { bubbles: true }));
+                els.density.dispatchEvent(new Event('change', { bubbles: true }));
+                els.lat.dispatchEvent(new Event('change', { bubbles: true }));
+                els.lng.dispatchEvent(new Event('change', { bubbles: true }));
+
+                // Recompute speed now that velocity might have changed
+                if (typeof recomputeApproachSpeed === 'function') {
+                    recomputeApproachSpeed();
+                }
+                // Start simulation
+                resetSimulation();
+            }
+
+            // Create the HTML marker element
+            function makeTunguskaElement() {
+                const wrap = document.createElement('div');
+                wrap.className = 'geo-marker';
+
+                const pin = document.createElement('div');
+                pin.className = 'gpin';
+                wrap.appendChild(pin);
+
+                const card = document.createElement('div');
+                card.className = 'gcard';
+                card.innerHTML = `
+					<div class="gcard-title">Tunguska Event (1908)</div>
+					<div class="gcard-body">
+						A powerful airburst over Siberia flattened ~2,000 km² of forest.
+						Likely a stony asteroid ~50–60 m across entering at high speed.
+					</div>
+					<button class="gcard-btn" type="button">Simulate this event</button>
+				`;
+                wrap.appendChild(card);
+
+                // Click handler
+                card.querySelector('.gcard-btn')?.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    runTunguskaSimulation();
+                });
+
+                // Keep card visible while hovering
+                wrap.addEventListener('mouseenter', () => card.classList.add('show'));
+                wrap.addEventListener('mouseleave', () => card.classList.remove('show'));
+
+                return wrap;
+            }
+
+            // Attach the htmlElements layer
             world
                 .globeMaterial(material)
                 .backgroundImageUrl('//cdn.jsdelivr.net/npm/three-globe/example/img/night-sky.png')
@@ -746,6 +758,10 @@
                     if (d.type === 'explosion' && explosionGroup) return explosionGroup.group;
                     return undefined;
                 })
+                // ADD: HTML elements layer for Tunguska marker
+                .htmlElementsData([TUNGUSKA])
+                .htmlElement(() => makeTunguskaElement())
+                .htmlAltitude(() => 0.01) // slightly above surface
                 // Keep globeRotation uniform in sync when user interacts
                 .onZoom(({ lng, lat }) => material.uniforms.globeRotation.value.set(lng, lat));
 
@@ -761,7 +777,7 @@
 
                 // Straight-line approach motion
                 if (!hasImpacted) {
-                    approachProgress = Math.min(approachLen, approachProgress + LINEAR_SPEED * dt);
+                    approachProgress = Math.min(approachLen, approachProgress + approachSpeedRps * dt); // use slider-driven speed
                     const cur = approachStart.clone().add(approachDir.clone().multiplyScalar(approachProgress));
                     const llh = vecToLngLatAlt(cur);
                     asteroid.lat = llh.lat;
@@ -1013,9 +1029,88 @@
             els.lat.addEventListener('change', () => ui.lat = Number(els.lat.value));
             els.lng.addEventListener('change', () => ui.lng = Number(els.lng.value));
             updateLabels();
+
+            // Slider filled-track painting with dual-accent gradient fill (not clipped)
+            const setRangeFill = el => {
+                if (!el) return;
+                const min = Number(el.min || 0), max = Number(el.max || 100), val = Number(el.value || min);
+                const pct = Math.max(0, Math.min(100, ((val - min) / (max - min)) * 100));
+                // Left filled part uses a blue→violet gradient; right part uses track bg
+                el.style.background = `linear-gradient(90deg, var(--accent), var(--accent-2)) 0 / ${pct}% 100% no-repeat, var(--track-bg)`;
+            };
+
+            const initRange = el => {
+                setRangeFill(el);
+                ['input', 'change'].forEach(evt => el.addEventListener(evt, () => setRangeFill(el)));
+            };
+            // ...existing initRange calls...
+            initRange(els.angle);
+            initRange(els.vel);
         }
         wireUI();
         let blast = computeBlast();
+
+        // Tooltip manager (body-level, not clipped by the panel)
+        const tipEl = document.createElement('div');
+        tipEl.className = 'ui-tooltip';
+        document.body.appendChild(tipEl);
+        let hideTO = null, anchor = null;
+
+        function placeTooltipAround(el) {
+            const pad = 10;
+            tipEl.style.left = '-9999px';
+            tipEl.style.top = '-9999px';
+            tipEl.classList.add('show');
+            // measure
+            const rect = el.getBoundingClientRect();
+            const w = tipEl.offsetWidth;
+            const h = tipEl.offsetHeight;
+            let left = rect.right + pad;
+            let top = rect.top;
+
+            // clamp inside viewport
+            const vw = window.innerWidth, vh = window.innerHeight;
+            if (left + w + 8 > vw) left = Math.max(8, vw - w - 8);
+            if (top + h + 8 > vh) top = Math.max(8, vh - h - 8);
+            tipEl.style.left = `${left}px`;
+            tipEl.style.top = `${top}px`;
+        }
+
+        function showTooltipFrom(el) {
+            clearTimeout(hideTO);
+            anchor = el;
+            const title = el.getAttribute('data-tip-title') || '';
+            const body = el.getAttribute('data-tip') || '';
+            tipEl.innerHTML = (title ? `<span class="ttl">${title}</span>` : '') + body;
+            tipEl.classList.add('show');
+            placeTooltipAround(el);
+        }
+
+        function scheduleHideTooltip() {
+            clearTimeout(hideTO);
+            hideTO = setTimeout(() => {
+                tipEl.classList.remove('show');
+            }, 120);
+        }
+
+        // Bind hover on all .info icons
+        function initTooltips() {
+            const infos = Array.from(document.querySelectorAll('#controls .info'));
+            infos.forEach(el => {
+                el.addEventListener('mouseenter', () => showTooltipFrom(el));
+                el.addEventListener('mouseleave', scheduleHideTooltip);
+                el.addEventListener('focus', () => showTooltipFrom(el));
+                el.addEventListener('blur', scheduleHideTooltip);
+            });
+            // Keep tooltip open when hovered
+            tipEl.addEventListener('mouseenter', () => clearTimeout(hideTO));
+            tipEl.addEventListener('mouseleave', scheduleHideTooltip);
+
+            // Re-position on resize/scroll if visible
+            window.addEventListener('resize', () => { if (tipEl.classList.contains('show') && anchor) placeTooltipAround(anchor); });
+            window.addEventListener('scroll', () => { if (tipEl.classList.contains('show') && anchor) placeTooltipAround(anchor); });
+        }
+        initTooltips();
 
         // Geodesic helpers for approach path
         function destinationPoint(lngDeg, latDeg, bearingDeg, distanceDeg) {
@@ -1036,6 +1131,7 @@
             const lng = ((λ2 * toDeg + 540) % 360) - 180;
             return { lng, lat };
         }
+
         function gcLerp(a, b, t) {
             const toRad = Math.PI / 180, toDeg = 180 / Math.PI;
             const ax = Math.cos(a.lat * toRad) * Math.cos(a.lng * toRad);
