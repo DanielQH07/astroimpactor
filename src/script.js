@@ -6,6 +6,7 @@ import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js'
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { OutlinePass } from 'three/addons/postprocessing/OutlinePass.js';
+import { Noise } from 'noisejs';
 
 import bgTexture1 from '/images/1.jpg';
 import bgTexture2 from '/images/2.jpg';
@@ -86,9 +87,30 @@ function createAsteroidOrbitLine(elements, segments = 200) {
     return orbitLine;
 }
 
+const noise = new Noise(Math.random());
+function createNoisyRock(radius = 1, detail = 3) {
+  const geometry = new THREE.IcosahedronGeometry(radius, detail);
+  const pos = geometry.attributes.position;
+
+  for (let i = 0; i < pos.count; i++) {
+    let x = pos.getX(i);
+    let y = pos.getY(i);
+    let z = pos.getZ(i);
+
+    const nx = noise.perlin3(x, y, z);
+    const scale = 1 + nx * 0.3; // distortion strength
+
+    pos.setXYZ(i, x * scale, y * scale, z * scale);
+  }
+
+  pos.needsUpdate = true;
+  geometry.computeVertexNormals();
+  return geometry;
+}
+
 function createAsteroidMesh(elements) {
-    const size = THREE.MathUtils.randFloat(0.5, 1.5);
-    const geometry = new THREE.SphereGeometry(size, 12, 12);
+    const size = THREE.MathUtils.randFloat(1, 2);
+    const geometry = createNoisyRock(size);
     const material = new THREE.MeshStandardMaterial({ color: 0x888888 });
     const mesh = new THREE.Mesh(geometry, material);
 
@@ -424,85 +446,6 @@ function createPlanet(planetName, size, position, tilt, texture, bump, ring, atm
   scene.add(planet3d);
   return {name, planet, planet3d, Atmosphere, moons, planetSystem, Ring};
 }
-// // ******  ORBIT LINE FUNCTION  ******
-// function createOrbitLine(radius) {
-//   // Create an ellipse curve
-//   const orbitCurve = new THREE.EllipseCurve(
-//     0, 0,            // ax, ay (center)
-//     radius, radius,  // xRadius, yRadius
-//     0, 2 * Math.PI,  // startAngle, endAngle
-//     false,           // clockwise
-//     0                // rotation
-//   );
-
-//   // Get points from the curve
-//   const points = orbitCurve.getPoints(100);
-//   const geometry = new THREE.BufferGeometry().setFromPoints(points);
-
-//   // Create the line material
-//   const material = new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.1 });
-
-//   // Create the line
-//   const orbitLine = new THREE.LineLoop(geometry, material);
-//   orbitLine.rotation.x = Math.PI / 2; // rotate to lie flat on XZ plane
-
-//   return orbitLine;
-// }
-
-
-// // Example asteroid data (mimicking your ESA JSON)
-// const testAsteroids = [
-//   { "Num/des.": "2025RX3", "Name": null, "km": 5777495, "au": 0.03862 },
-//   { "Num/des.": "2025AB1", "Name": "TestAsteroid1", "km": 12000000, "au": 0.07 },
-//   { "Num/des.": "2025CD2", "Name": "TestAsteroid2", "km": 8000000, "au": 0.05 }
-// ];
-
-
-// function kmToOrbitRadius(km) {
-//   // Map km to a reasonable Three.js scale for your solar system
-//   // Example: divide by 100000 to scale down to your scene
-//   return km / 100000;
-// }
-
-
-// function createTestAsteroids(data) {
-//   const asteroidMeshes = [];
-
-//   data.forEach(item => {
-//     const size = THREE.MathUtils.randFloat(0.5, 1.5); // random small asteroid size
-//     const geometry = new THREE.SphereGeometry(size, 12, 12);
-//     const material = new THREE.MeshStandardMaterial({ color: 0x888888 });
-//     const mesh = new THREE.Mesh(geometry, material);
-
-//     // Random position along circular orbit
-//     const orbitRadius = kmToOrbitRadius(item.km);
-//     const angle = Math.random() * Math.PI * 2;
-//     mesh.position.set(
-//       orbitRadius * Math.cos(angle),
-//       0,
-//       orbitRadius * Math.sin(angle)
-//     );
-
-//     // Save some orbit info for animation
-//     mesh.userData = {
-//       orbitRadius,
-//       orbitSpeed: THREE.MathUtils.randFloat(0.00005, 0.0002),
-//       angle
-//     };
-    
-//     // Add orbit line
-//     const orbitLine = createOrbitLine(orbitRadius);
-//     scene.add(orbitLine);
-
-//     scene.add(mesh);
-//     asteroidMeshes.push(mesh);
-//   });
-
-//   return asteroidMeshes;
-// }
-
-// const visualAsteroids = createTestAsteroids(testAsteroids);
-
 const asteroidElements = [
     {
       "Name": "433",
@@ -831,6 +774,53 @@ const asteroidElements = [
     }
 ];
 
+
+const orbitalData = [
+  {
+    "Name": "433",
+    "a": 1.4581,
+    "e": 0.2228,
+    "i": 10.8284,
+    "long. node": 304.2700,
+    "arg. peric.": 178.9297,
+    "mean anomaly": 310.5543
+  },
+  {
+    "Name": "2023VD3",
+    "a": 1.1,
+    "e": 0.15,
+    "i": 5.0,
+    "long. node": 220.5,
+    "arg. peric.": 110.0,
+    "mean anomaly": 250.0
+  },
+  {
+    "Name": "2001AB",
+    "a": 1.9,
+    "e": 0.1,
+    "i": 15,
+    "long. node": 180,
+    "arg. peric.": 45,
+    "mean anomaly": 10
+  }
+];
+
+const riskData = [
+  {
+    "Num/des.": "2023VD3",
+    "IP max": 0.00235,
+    "PS max": -2.67,
+    "m": 14.0
+  },
+  {
+    "Num/des.": "433",
+    "IP max": 1e-5,
+    "PS max": -1.5,
+    "m": 10.83
+  }
+];
+
+
 // Add asteroids and orbits
     const visualAsteroids = asteroidElements.map(el => {
     const orbitLine = createAsteroidOrbitLine(el);
@@ -1101,7 +1091,6 @@ const pluto = new createPlanet('Pluto', 1, 350, 57, plutoTexture)
     }
 };
 
-
 // Array of planets and atmospheres for raycasting
 const raycastTargets = [
   mercury.planet, venus.planet, venus.Atmosphere, earth.planet, earth.Atmosphere, 
@@ -1148,6 +1137,75 @@ neptune.planet.receiveShadow = true;
 pluto.planet.receiveShadow = true;
 
 
+
+// -----------------------------
+// 2️⃣ Danger logic + matching
+// -----------------------------
+function isAsteroidDangerous(riskItem) {
+  const ipMax = riskItem["IP max"];
+  const psMax = riskItem["PS max"];
+  return ipMax >= 1e-4 || psMax > -2;
+}
+
+const dangerousAsteroids = riskData
+  .filter(isAsteroidDangerous)
+  .map(a => a["Num/des."].toString());
+
+console.log("Dangerous asteroids:", dangerousAsteroids);
+
+// -----------------------------
+// 3️⃣ Orbit + mesh creation
+// -----------------------------
+function createAsteroidWithOrbit(el) {
+  const id = el.Name?.toString();
+  const isDanger = dangerousAsteroids.includes(id);
+
+  //  Create orbit line (red = danger, yellow = safe)
+  let color = isDanger ? 0xff0000 : 0xffff00;
+  const orbitLine = createAsteroidOrbitLine(el);
+  orbitLine.material.color.setHex(color);
+  scene.add(orbitLine);
+
+  //  Create asteroid mesh
+  const mesh = createAsteroidMesh(el);
+  if (isDanger) {
+    mesh.material.color.setHex(0xff4444);
+    mesh.material.emissive = new THREE.Color(0xff0000);
+    mesh.material.emissiveIntensity = 0.3;
+  }
+
+  return { mesh, orbitLine };
+}
+
+// -----------------------------
+// 4️⃣ Add asteroids to scene
+// -----------------------------
+const asteroidObjects = orbitalData.map(el => createAsteroidWithOrbit(el));
+
+function updateAsteroidOrbit(mesh, deltaTime = 1, accelerationOrbit = 1) {
+  const data = mesh.userData;
+  if (!data || !data.elements) return;
+
+  const { elements, orbitSpeed } = data;
+  const e = elements.e;
+
+  // advance mean anomaly (apply global speed factor)
+  data.meanAnomaly += orbitSpeed * deltaTime * accelerationOrbit;
+
+  // solve Kepler’s Equation again to get new eccentric anomaly
+  const E = solveKepler(data.meanAnomaly, e);
+  data.eccentricAnomaly = E;
+
+  // get new true anomaly
+  const nu = 2 * Math.atan2(
+    Math.sqrt(1 + e) * Math.sin(E / 2),
+    Math.sqrt(1 - e) * Math.cos(E / 2)
+  );
+
+  // convert to XYZ and update position
+  const pos = orbitalElementsToPosition(elements, nu);
+  mesh.position.copy(pos);
+}
 
 
 function animate(){
@@ -1277,6 +1335,9 @@ if (isMovingTowardsPlanet) {
 //   ast.position.z = r * Math.sin(ast.userData.angle);
 //   ast.rotation.y += 0.001; // spin the asteroid
 // });
+    asteroidObjects.forEach(({ mesh }) => {
+    updateAsteroidOrbit(mesh);
+  });
     visualAsteroids.forEach(ast => {
     const e = ast.userData.elements.e;
     const a = ast.userData.elements.a;
@@ -1296,6 +1357,10 @@ if (isMovingTowardsPlanet) {
 
     // Optional: spin asteroid
     ast.rotation.y += 0.001;
+
+    asteroidObjects.forEach(({ mesh }) => {
+    mesh.rotation.y += 0.01;
+  });
 });
 
 
