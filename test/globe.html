@@ -1,8 +1,13 @@
 <head>
     <link rel="stylesheet" href="style.css" />
-
-    <script src="//cdn.jsdelivr.net/npm/globe.gl"></script>
+    <!-- ADD: city labels CSS -->
+    <link rel="stylesheet" href="cities.css" />
+    <!-- ADD: cities data (exports window.MAJOR_CITIES) -->
+    <script src="cities-layer.js"></script>
     <!--  <script src="../../dist/globe.gl.js"></script>-->
+    <!-- FIX: use https (protocol-relative breaks under file://) -->
+    <script src="https://cdn.jsdelivr.net/npm/globe.gl"></script>
+    <!-- <script src="population-agument.js"></script> -->
 </head>
 
 <body>
@@ -16,7 +21,7 @@
                 data-tip="The size across the asteroid. Larger diameter increases volume ~ d³, mass, and impact energy very quickly."></span>
         </div>
         <div class="row">
-            <input id="ui-diameter" type="number" min="1" step="1" value="2300" />
+            <input id="ui-diameter" type="number" min="1" step="1" value="50" />
             <select id="ui-unit">
                 <option value="m" selected>m</option>
                 <option value="km">km</option>
@@ -71,6 +76,10 @@
         <div class="row">
             <input id="ui-lng" type="number" min="-180" max="180" step="0.1" value="0" class="full" />
         </div>
+        <!-- ADD: click-to-fill note -->
+        <div id="ui-click-note" class="muted" style="margin-top:6px;font-size:12px;opacity:.8;">
+            👉 Click the globe to auto-fill coordinates.
+        </div>
 
         <button id="simulateBtn">Simulate</button>
     </div>
@@ -90,6 +99,8 @@
             BufferGeometry, Float32BufferAttribute, Points, PointsMaterial, TetrahedronGeometry
         } from 'https://esm.sh/three';
         import * as solar from 'https://esm.sh/solar-calculator';
+        // CHANGE: also import merge
+        import { feature as topojsonFeature, merge as topojsonMerge } from 'https://esm.sh/topojson-client@3';
 
         const dayNightShader = {
             vertexShader: `
@@ -159,7 +170,8 @@
         const timeEl = document.getElementById('time');
         timeEl.textContent = new Date(dt).toUTCString();
 
-        const world = new Globe(document.getElementById('globeViz'));
+        // FIX: use Globe factory, not `new`
+        const world = Globe()(document.getElementById('globeViz'));
 
         // Build geodesic circle coordinates (lng/lat pairs) around a center
         function circleCoords(lng, lat, radiusDeg, steps = 96) {
@@ -299,9 +311,146 @@
             return features;
         }
 
+        // NEW: preload a lightweight land mask (Natural Earth 110m)
+        let landPolys = []; // Array<Polygon>, Polygon = Array<Ring>, Ring = Array<[lng,lat]>
+        (async () => {
+            try {
+                const topo = await (await fetch('https://unpkg.com/world-atlas@2/land-110m.json')).json();
+                const landObj = topo.objects?.land;
+                if (!landObj) {
+                    console.warn('[Tsunami] land object missing in topology');
+                    landPolys = [];
+                    return;
+                }
+
+                let geom = null; // GeoJSON Geometry (Polygon/MultiPolygon)
+                // If it's a GeometryCollection, merge its geometries into one MultiPolygon
+                if (landObj.type === 'GeometryCollection') {
+                    try {
+                        geom = topojsonMerge(topo, landObj.geometries); // -> MultiPolygon
+                    } catch (e) {
+                        console.warn('[Tsunami] merge failed, fallback to feature()', e);
+                    }
+                }
+                // Fallback: try feature()
+                if (!geom) {
+                    const feat = topojsonFeature(topo, landObj);
+                    if (feat?.type === 'Feature' && feat.geometry) {
+                        geom = feat.geometry; // Polygon/MultiPolygon
+                    } else if (feat?.type === 'FeatureCollection' && landObj.geometries) {
+                        // If we still got a collection, merge it
+                        geom = topojsonMerge(topo, landObj.geometries);
+                    }
+                }
+
+                if (!geom || !geom.coordinates) {
+                    console.warn('[Tsunami] Could not extract land geometry');
+                    landPolys = [];
+                    return;
+                }
+
+                // Normalize to MultiPolygon coords array
+                const coords = (geom.type === 'MultiPolygon') ? geom.coordinates
+                    : (geom.type === 'Polygon') ? [geom.coordinates] : [];
+                // Sanitize polygons and rings
+                landPolys = coords
+                    .map(poly => Array.isArray(poly)
+                        ? poly.filter(ring => Array.isArray(ring) && ring.length >= 3)
+                        : [])
+                    .filter(poly => poly.length > 0);
+
+                console.log('[Tsunami] Land mask parsed:', { type: geom.type, polygons: landPolys.length });
+            } catch (e) {
+                landPolys = [];
+                console.warn('[Tsunami] Failed to load land mask:', e);
+            }
+        })();
+
+        // NEW: point-in-polygon helpers on lon/lat (planar ray-cast; good enough here)
+        function pointInRing(lng, lat, ring) {
+            // NEW guard
+            if (!Array.isArray(ring) || ring.length < 3) return false;
+            let inside = false;
+            for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+                const xi = ring[i][0], yi = ring[i][1];
+                const xj = ring[j][0], yj = ring[j][1];
+                const intersect = ((yi > lat) !== (yj > lat)) &&
+                    (lng < (xj - xi) * (lat - yi) / ((yj - yi) || 1e-12) + xi);
+                if (intersect) inside = !inside;
+            }
+            return inside;
+        }
+        function pointInPolygon(lng, lat, polygon) {
+            // NEW guard
+            if (!Array.isArray(polygon) || !Array.isArray(polygon[0]) || polygon[0].length < 3) return false;
+            // polygon[0] = outer, polygon[1..] = holes
+            if (!pointInRing(lng, lat, polygon[0])) return false;
+            for (let i = 1; i < polygon.length; i++) {
+                if (pointInRing(lng, lat, polygon[i])) return false;
+            }
+            return true;
+        }
+        function isPointOnLand(lng, lat) {
+            // NEW guards
+            if (!Array.isArray(landPolys) || landPolys.length === 0) return false;
+            for (const poly of landPolys) {
+                if (!Array.isArray(poly) || !Array.isArray(poly[0]) || poly[0].length < 3) continue;
+                if (pointInPolygon(lng, lat, poly)) return true;
+            }
+            return false;
+        }
+        // NEW: expose helper for quick manual checks in console
+        window.isPointOnLand = isPointOnLand;
+
+        // NEW: estimate min great-circle distance (degrees) from a point to nearest coastline vertex
+        // 'step' samples every Nth vertex for performance (increase for speed, decrease for accuracy)
+        function minCoastDistanceDeg(lng, lat, step = 6) {
+            if (!Array.isArray(landPolys) || landPolys.length === 0) return Infinity;
+
+            const toRad = Math.PI / 180;
+            const toDeg = 180 / Math.PI;
+
+            const φ1 = lat * toRad;
+            const λ1 = lng * toRad;
+            const sinφ1 = Math.sin(φ1);
+            const cosφ1 = Math.cos(φ1);
+
+            let best = Infinity;
+
+            for (const poly of landPolys) {
+                if (!Array.isArray(poly)) continue;
+                for (const ring of poly) {
+                    if (!Array.isArray(ring) || ring.length < 3) continue;
+
+                    for (let i = 0; i < ring.length; i += Math.max(1, step)) {
+                        const coord = ring[i];
+                        if (!coord || coord.length < 2) continue;
+
+                        const L = coord[0];
+                        const A = coord[1];
+
+                        const φ2 = A * toRad;
+                        const λ2 = L * toRad;
+
+                        // spherical law of cosines
+                        const cosΔσ = sinφ1 * Math.sin(φ2) + cosφ1 * Math.cos(φ2) * Math.cos(λ2 - λ1);
+                        const Δσ = Math.acos(Math.max(-1, Math.min(1, cosΔσ)));
+                        const dDeg = Δσ * toDeg;
+
+                        if (dDeg < best) best = dDeg;
+                        // quick exit if very close
+                        if (best < 0.05) return best;
+                    }
+                }
+            }
+
+            return best;
+        }
+
         Promise.all([
-            new TextureLoader().loadAsync('//cdn.jsdelivr.net/npm/three-globe/example/img/earth-day.jpg'),
-            new TextureLoader().loadAsync('//cdn.jsdelivr.net/npm/three-globe/example/img/earth-night.jpg')
+            // FIX: use https for assets
+            new TextureLoader().loadAsync('https://cdn.jsdelivr.net/npm/three-globe/example/img/earth-day.jpg'),
+            new TextureLoader().loadAsync('https://cdn.jsdelivr.net/npm/three-globe/example/img/earth-night.jpg')
         ]).then(([dayTexture, nightTexture]) => {
             const material = new ShaderMaterial({
                 uniforms: {
@@ -676,7 +825,7 @@
             // --- Markers data ---
             const TUNGUSKA = { lat: 60 + 55 / 60, lng: 101 + 57 / 60, id: 'tunguska' };
             const CHELYABINSK = { lat: 55.150, lng: 61.410, id: 'chelyabinsk' };
-            // NEW: Nördlinger Ries (48°53'03”N, 010°33'25”E)
+            // NEW: Nördlinger Ries (48°53'03"N, 010°33'25"E)
             const RIES = { lat: 48 + 53 / 60 + 3 / 3600, lng: 10 + 33 / 60 + 25 / 3600, id: 'ries' };
             // NEW: Chesapeake Bay impact crater (37°17′N 76°1′W)
             const CHESAPEAKE = { lat: 37 + 17 / 60, lng: -(76 + 1 / 60), id: 'chesapeake' };
@@ -686,6 +835,16 @@
             const SULAWESI = { lat: -4.2, lng: 120.6, id: 'sulawesi' };
             // NEW: Vredefort impact (27°0′0″S 27°30′0″E)
             const VREDEFORT = { lat: -(27 + 0 / 60 + 0 / 3600), lng: 27 + 30 / 60 + 0 / 3600, id: 'vredefort' };
+
+            // ADD: convert global city list to Globe html elements (reduced set)
+            const CITIES_SRC = (window.IMPORTANT_CITIES || window.MAJOR_CITIES || []);
+            const CITIES = CITIES_SRC.map((c, i) => ({
+                id: `city:${i}`,
+                kind: 'city',
+                name: c.name,
+                lat: Number(c.lat),
+                lng: Number(c.lon)
+            }));
 
             // Refs for viewport placement
             let tunguskaWrap = null, tunguskaCard = null;
@@ -892,7 +1051,7 @@
 					<div class="gcard-title">Tunguska Event (1908)</div>
 					<div class="gcard-body">
 						A massive airburst over Siberia that flattened roughly 2,000 km² of forest.
-						Likely caused by a stony asteroid about 50–60 m entering at high speed.
+						Likely caused by a stony asteroid about 50-60 m entering at high speed.
 					</div>
 					<img class="gcard-img" loading="lazy"
 						src="https://cdn.britannica.com/00/199200-138-9222B648/video-overview-Tunguska-event.jpg?w=800&h=450&c=crop"
@@ -1107,7 +1266,7 @@
                 card.innerHTML = `
 					<div class="gcard-title">Chicxulub crater</div>
 					<div class="gcard-body">
-						A ~150–180 km impact structure on the Yucatán Peninsula, Mexico, formed ~66 million years ago.
+						A ~150-180 km impact structure on the Yucatán Peninsula, Mexico, formed ~66 million years ago.
 					</div>
 					<img class="gcard-img" loading="lazy"
 						src="https://www.science.org/do/10.1126/science.aaf5684/full/gg_60212w_crater-1644966022570.jpg"
@@ -1254,7 +1413,8 @@
 
             world
                 .globeMaterial(material)
-                .backgroundImageUrl('//cdn.jsdelivr.net/npm/three-globe/example/img/night-sky.png')
+                // FIX: use https for background image
+                .backgroundImageUrl('https://cdn.jsdelivr.net/npm/three-globe/example/img/night-sky.png')
                 // Crater layer (instant update, no tween)
                 .polygonsData([])
                 .polygonsTransitionDuration(0)
@@ -1264,7 +1424,8 @@
                 .polygonStrokeColor(() => 'rgba(0,0,0,0)')
                 // Rings layer (shockwave)
                 .ringsData([])
-                .ringColor(() => (t => `rgba(255,100,50,${Math.sqrt(1 - t)})`))
+                // CHANGE: allow per-ring color via data.colorFn; fallback to orange shockwave
+                .ringColor(d => (d && d.colorFn) ? d.colorFn : (t => `rgba(255,100,50,${Math.sqrt(1 - t)})`))
                 .ringMaxRadius('maxR')
                 .ringPropagationSpeed('propagationSpeed')
                 .ringRepeatPeriod('repeatPeriod')
@@ -1279,23 +1440,49 @@
                     return undefined;
                 })
                 // ADD all four markers to the HTML layer
-                .htmlElementsData([TUNGUSKA, CHELYABINSK, RIES, CHESAPEAKE, CHICXULUB, SULAWESI, VREDEFORT])
+                .htmlElementsData([
+                    TUNGUSKA, CHELYABINSK, RIES, CHESAPEAKE, CHICXULUB, SULAWESI, VREDEFORT,
+                    ...CITIES
+                ])
                 .htmlElement(d => {
+                    if (d && d.kind === 'city') {
+                        const el = document.createElement('span');
+                        el.className = 'city-label globe-city';
+                        el.textContent = d.name;
+                        return el;
+                    }
+                    // ...existing event marker creation...
                     if (d.id === 'tunguska') return makeTunguskaElement();
                     if (d.id === 'chelyabinsk') return makeChelyabinskElement();
                     if (d.id === 'ries') return makeRiesElement();
                     if (d.id === 'chesapeake') return makeChesapeakeElement();
-                    // NEW
                     if (d.id === 'chicxulub') return makeChicxulubElement();
                     if (d.id === 'sulawesi') return makeSulawesiElement();
                     if (d.id === 'vredefort') return makeVredefortElement();
                     return document.createElement('div');
                 })
-                .htmlAltitude(() => 0.01)
+                // CHANGE: slightly lower altitude for city labels
+                .htmlAltitude(d => (d && d.kind === 'city') ? 0.005 : 0.01)
                 .onZoom(({ lng, lat }) => {
                     // Re-place while zooming
                     material.uniforms.globeRotation.value.set(lng, lat);
                     placeAllCards();
+                })
+                // ADD: click to pick impact location
+                .onGlobeClick(({ lat, lng }) => {
+                    // write to inputs
+                    els.lat.value = lat.toFixed(4);
+                    els.lng.value = lng.toFixed(4);
+                    // sync UI state
+                    ui.lat = Number(els.lat.value);
+                    ui.lng = Number(els.lng.value);
+                    // update current impact target
+                    applyImpactFromUI();
+                    // if simulation is running and not impacted, recompute the approach
+                    if (simulationActive && !hasImpacted) {
+                        setupStraightApproach();
+                        world.objectsData(objects);
+                    }
                 });
 
             // Also re-place while orbit controls move
@@ -1360,16 +1547,89 @@
                         blast = computeBlast();
                         explosionDuration = blast.durationMs;
 
+                        // Shockwave ring config
                         const shock = {
                             lng: IMPACT.lng, lat: IMPACT.lat,
                             maxR: blast.shockMaxR * 0.5,
                             propagationSpeed: blast.shockSpeed,
                             repeatPeriod: 1e9
                         };
-                        world.ringsData([shock]);
-                        const lifeMs = (shock.maxR / shock.propagationSpeed) * 1000 + blast.shockLifePadMs;
-                        setTimeout(() => world.ringsData([]), lifeMs);
+                        const shockLifeMs = (shock.maxR / shock.propagationSpeed) * 1000 + blast.shockLifePadMs;
 
+                        // Build rings array
+                        const rings = [shock];
+
+                        // Tsunami: only if ocean impact
+                        const onLand = isPointOnLand(IMPACT.lng, IMPACT.lat);
+                        const oceanHit = landPolys.length > 0 && !onLand;
+
+                        if (oceanHit) {
+                            const bf = blast?.blastFactor ?? 1;
+
+                            // Range and speed constraints
+                            const baseMaxR = Math.min(180, Math.max(40, 70 * bf + 20));
+                            const tsuMaxR = Math.max(30, baseMaxR * 0.8); // 80% range
+                            const baseSpeed = Math.min(40, Math.max(10, 12 + 8 * bf));
+                            const tsuSpeed = Math.max(4, baseSpeed * 0.5); // 50% speed
+
+                            // Fixed tsunami visual duration: ~2s
+                            const tsuDurationMs = 2000;
+                            const ripples = 12;
+                            const repeatPeriod = Math.max(120, tsuDurationMs / ripples);
+
+                            // Dark blue color + stronger distance fade
+                            const blueA = (t) => `rgba(10,40,140,${0.95 * Math.pow(1 - t, 2.0)})`;
+                            const blueB = (t) => `rgba(10,40,140,${0.60 * Math.pow(1 - t, 2.0)})`;
+
+                            // Primary and secondary ripples
+                            const tsu = {
+                                lng: IMPACT.lng, lat: IMPACT.lat,
+                                maxR: tsuMaxR,
+                                propagationSpeed: tsuSpeed,
+                                repeatPeriod,
+                                colorFn: blueA
+                            };
+                            const tsu2 = {
+                                lng: IMPACT.lng, lat: IMPACT.lat,
+                                maxR: tsuMaxR,
+                                propagationSpeed: tsuSpeed * 0.92,
+                                repeatPeriod,
+                                colorFn: blueB
+                            };
+                            rings.push(tsu, tsu2);
+
+                            // If/when the wave reaches the nearest coast, keep it only briefly
+                            const coastDeg = minCoastDistanceDeg(IMPACT.lng, IMPACT.lat, 6);
+
+                            const coastMs = Number.isFinite(coastDeg) ? (coastDeg / tsuSpeed) * 1000 : Infinity;
+                            var tsuLifeMs = Math.min(tsuDurationMs, coastMs + 300) + blast.shockLifePadMs;
+
+                            // Apply rings
+                            world.ringsData(rings);
+
+                            // CHANGE: stop tsunami rings in-place (no ringsData reset -> no second shock)
+                            setTimeout(() => {
+                                // Prevent new pulses
+                                tsu.repeatPeriod = 1e12;
+                                tsu2.repeatPeriod = 1e12;
+                                // Kill current pulses quickly and hide
+                                tsu.propagationSpeed = 1e6; tsu2.propagationSpeed = 1e6;
+                                tsu.maxR = 0.0001; tsu2.maxR = 0.0001;
+                                tsu.colorFn = () => 'rgba(0,0,0,0)';
+                                tsu2.colorFn = () => 'rgba(0,0,0,0)';
+                            }, Math.round(tsuLifeMs));
+
+                            // Keep shock until its natural life
+                            setTimeout(() => {
+                                world.ringsData([]);
+                            }, Math.round(shockLifeMs));
+                        } else {
+                            // No tsunami: just shock with its own lifetime
+                            world.ringsData(rings);
+                            setTimeout(() => world.ringsData([]), Math.round(shockLifeMs));
+                        }
+
+                        // Spawn explosion object
                         explosionGroup = createExplosion();
                         const explosionObj = { type: 'explosion', lat: IMPACT.lat, lng: IMPACT.lng, altitude: 0 };
                         objects.push(explosionObj);
@@ -1514,6 +1774,7 @@
         function computeBlast() {
             const d_m = getDiameterMeters();
             const rho = Number(els.density.value || ui.density);
+
             const v_kms = Number(els.vel.value || ui.velocityKms);
             const v = v_kms * 1000;
             const theta = (Number(els.angle.value || ui.angleDeg)) * Math.PI / 180;
@@ -1663,7 +1924,7 @@
             const sinδ = Math.sin(δ), cosδ = Math.cos(δ);
             const sinφ2 = sinφ1 * cosδ + cosφ1 * sinδ * Math.cos(θ);
             const φ2 = Math.asin(sinφ2);
-            const y = Math.sin(θ) * sinδ * cosφ1;
+            const y = Math.sin(theta) * sinδ * cosφ1;
             const x = cosδ - sinφ1 * sinφ2;
             const λ2 = λ1 + Math.atan2(y, x);
 
