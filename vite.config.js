@@ -1,16 +1,30 @@
-export default {
-    root: 'src/',
-    publicDir: '../static/',
-    base: './',
-    server:
-    {
-        host: true, // Open to local network and display URL
-        open: !('SANDBOX_URL' in process.env || 'CODESANDBOX_HOST' in process.env) // Open if it's not a CodeSandbox
-    },
-    build:
-    {
-        outDir: '../dist', // Output in the dist/ folder
-        emptyOutDir: true, // Empty the folder first
-        sourcemap: true // Add sourcemap
-    },
-}
+import { defineConfig } from 'vite'
+import { resolve } from 'path'
+
+export default defineConfig({
+  root: '.', // gốc là project
+  publicDir: 'static',
+  base: './',
+  server: {
+    host: true,
+    open: '/src/index.html' // mở mặc định src/index.html khi dev
+  },
+  build: {
+    outDir: 'dist',
+    emptyOutDir: true,
+    sourcemap: true,
+    rollupOptions: {
+      input: {
+        main: resolve(__dirname, 'src/index.html'),
+        globe: resolve(__dirname, 'test/globe.html'),
+        defense: resolve(__dirname, 'Defense/earth.html')
+      }
+    }
+  },
+  // ⚡️ Thêm phần này
+  resolve: {
+    alias: {
+      '/images': resolve(__dirname, 'src/images'),
+    }
+  }
+})

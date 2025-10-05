@@ -37,6 +37,7 @@ import uraRingTexture from '/images/uranus_ring.png';
 import neptuneTexture from '/images/neptune.jpg';
 import plutoTexture from '/images/plutomap.jpg';
 
+// Fetches and returns JSON data from the specified URL asynchronously.
 async function readJSON(url) {
   const res = await fetch(url);
   const json = await res.json();
@@ -55,28 +56,30 @@ let   TIME_SCALE = 5e5;                                    // 1s stimulate = TIM
 // Kepler mean motion from a (AU)
 const GM_SUN = 1.32712440018e11; // km^3/s^2
 
+// Computes mean motion (angular velocity) in radians per second for a given semi-major axis in AU.
 function meanMotionRadPerSec(a_AU){
   const a_km = a_AU * AU_KM;
   return Math.sqrt(GM_SUN / (a_km * a_km * a_km));
 }
 
+// Converts linear velocity [km/s] to angular velocity [rad/s] based on distance in scene units.
 function vrelToOmega(v_kmps, r_su){
   // v [km/s] -> v_scene [su/s] -> omega [rad/s]
   const v_su_per_s = (v_kmps / KM_PER_SU) * TIME_SCALE;
   return v_su_per_s / Math.max(r_su, 1e-6);
 }
 
-const M_PER_SU = KM_PER_SU * 1000;     // mét cho mỗi scene-unit (dựa trên AU->SU hiện có)
-//const NEO_MIN_RADIUS_SU = 2;        // bán kính tối thiểu để không “biến mất” trên màn hình
+const M_PER_SU = KM_PER_SU * 1000;     // Meters per scene unit (based on AU→SU scale)
 // --- Size estimation helpers (H, G -> diameter) ---
 const PV_DEFAULT = 0.14; // albedo mặc định
 function estimateAlbedoFromSlope(G) {
   if (!Number.isFinite(G)) return PV_DEFAULT;
-  if (G <= 0.10) return 0.06;   // tối ~ C-type
-  if (G >= 0.30) return 0.25;   // sáng ~ S-type
-  return PV_DEFAULT;            // trung bình
+  if (G <= 0.10) return 0.06;   // Dark (C-type)
+  if (G >= 0.30) return 0.25;   // Bright (S-type)
+  return PV_DEFAULT;            // Average reflectivity
 }
 
+// Calculates asteroid diameter [m] from absolute magnitude H and albedo pV.
 function diameterFromH_m(H, pV = PV_DEFAULT) {
   if (!Number.isFinite(H) || !Number.isFinite(pV) || pV <= 0) return null;
   const D_km = 1329 * Math.pow(10, -0.2 * H) / Math.sqrt(pV);
@@ -85,18 +88,21 @@ function diameterFromH_m(H, pV = PV_DEFAULT) {
 
 //For day logging
 const DAY_S = 86400;                    // seconds in a day
+// Converts Modified Julian Date (MJD) to a JavaScript Date object.
 function mjdToDate(mjd) {
   // MJD epoch is 1858-11-17; Unix epoch offset is 40587 days
   return new Date((mjd - 40587) * DAY_S * 1000);
 }
+// Converts a JavaScript Date object to Modified Julian Date (MJD).
 function dateToMJD(date) {
   return date.getTime() / 1000 / DAY_S + 40587;
 }
 let simMJD = null;
 
-// THREE clock for frame-delta based updates
-const clock = new THREE.Clock();
+// --- Frame timing ---
+const clock = new THREE.Clock(); // Used for delta-time based frame updates
 
+// --- Kepler solver ---
 // Solve Kepler's Equation (M -> E) using simple iteration
 function solveKepler(M, e, tolerance = 1e-6) {
     let E = M;
@@ -108,14 +114,17 @@ function solveKepler(M, e, tolerance = 1e-6) {
     return E;
 }
 
+// --- Base materials ---
+// Default asteroid material for rocky surfaces.
 const baseAsteroidMaterial = new THREE.MeshStandardMaterial({
   color: 0x888888,
   metalness: 0.1,
   roughness: 0.8,
-  // tùy scene: toneMapped=false để giảm lệch màu khi nhiều object
+  // Depending on scene setup: disable tone mapping to preserve neutral color.
   toneMapped: false
 });
 
+// Default orbit line material for asteroid trajectories.
 const baseOrbitLineMaterial = new THREE.LineBasicMaterial({
   color: 0xffff00,
   transparent: true,
@@ -123,7 +132,8 @@ const baseOrbitLineMaterial = new THREE.LineBasicMaterial({
   depthWrite: false
 });
 
-// Convert orbital elements to 3D position
+// --- Orbital mechanics ---
+// Converts orbital elements to a 3D position vector in scene coordinates.
 function orbitalElementsToPosition(elements, trueAnomalyRad) {
     const a = elements.a;
     const e = elements.e;
@@ -144,6 +154,7 @@ function orbitalElementsToPosition(elements, trueAnomalyRad) {
     return new THREE.Vector3(x, y, z);
 }
 
+// Creates an orbit line mesh from orbital elements.
 function createAsteroidOrbitLine(elements, segments = 600) {
   const points = [];
   for (let j = 0; j <= segments; j++) {
@@ -160,6 +171,8 @@ function createAsteroidOrbitLine(elements, segments = 600) {
   return line;
 }
 
+// --- Geometry noise generator ---
+// Adds surface noise to create a rocky, irregular asteroid shape.
 const noise = new Noise(Math.random());
 function createNoisyRock(radius = 1, detail = 3) {
   const geometry = new THREE.IcosahedronGeometry(radius, detail);
@@ -181,24 +194,25 @@ function createNoisyRock(radius = 1, detail = 3) {
   return geometry;
 }
 
-const VISUAL_SCALE = 1500;
-const NEO_MIN_RADIUS_SU = 1;
+// --- Asteroid mesh creation ---
+const VISUAL_SCALE = 1500;    // Scale factor for visual representation
+const NEO_MIN_RADIUS_SU = 1;  // Minimum radius to remain visible in scene
+
+// --- Asteroid mesh creation ---
+// Creates a 3D asteroid mesh from orbital and risk data.
 function createAsteroidMesh(elements) {
   const material = baseAsteroidMaterial.clone();
   material.color.setHex(0x888888);
 
-  // ---- ID để match risk ----
+  // Unique ID for linking to risk or metadata
   const id = (elements.Name ?? elements["Num/des."] ?? "").toString();
 
-  // ---- Lấy size từ risk.m (diameter in meters) ----
-  // const risk = riskById[id];
-  // const d_m  = risk && Number.isFinite(risk.m) ? Number(risk.m) : null;
-  // const radius_su = d_m ? (d_m / M_PER_SU) : THREE.MathUtils.randFloat(0.5, 1);
-  // //const radius_su    = Math.max(NEO_MIN_RADIUS_SU, baseRadiusSU*0.2);
-// ---- Lấy size (ưu tiên risk.m; fallback từ H & G) ----
+   // --- Size estimation ---
+  // Primary source: risk.m (diameter in meters)
   const risk = riskById[id];
   let d_m = (risk && Number.isFinite(Number(risk.m))) ? Number(risk.m) : null;
 
+  // Fallback: compute from absolute magnitude (H) and slope parameter (G)
   if (!d_m) {
     const H = Number(elements["absolute magnitude"]);
     const G = Number(elements["slope param"]);
@@ -207,39 +221,46 @@ function createAsteroidMesh(elements) {
     if (Number.isFinite(d_from_H)) d_m = d_from_H;
   }
 
+  // Convert diameter → radius in scene units (SU)
   const baseRadius_su = d_m ? (d_m / M_PER_SU) : THREE.MathUtils.randFloat(0.5, 1);
   const radius_su = Math.max(NEO_MIN_RADIUS_SU, baseRadius_su * VISUAL_SCALE);
 
+  // Generate irregular rock geometry with surface noise
   const geometry = createNoisyRock(radius_su);
   const mesh = new THREE.Mesh(geometry, material);
 
-  // ---- Kepler at epoch (giữ nguyên) ----
+  // --- Initial position ---
+  // Compute true anomaly (ν) from mean anomaly (M) and eccentricity (e)
   const M = THREE.MathUtils.degToRad(elements["mean anomaly"]);
   const E = solveKepler(M, elements.e);
   const nu = 2 * Math.atan2(Math.sqrt(1+elements.e)*Math.sin(E/2), Math.sqrt(1-elements.e)*Math.cos(E/2));
+
+  // Get 3D position in heliocentric coordinates
   const position = orbitalElementsToPosition(elements, nu);
   mesh.position.copy(position);
   mesh.renderOrder = 1;
 
-  // TẠO ORBIT LINE Ở ĐÂY (sau khi đã có mesh)
+  // --- Orbit line ---
+  // Create orbit path line and sync its visibility with settings.
   const orbitLine = createAsteroidOrbitLine(elements);
   orbitLine.visible = settings.showOrbitLines; // đồng bộ checkbox
   mesh.userData.orbitLine = orbitLine;
 
-  // ---- Mặc định orbitSpeed cũ ----
+  // --- Orbit motion speed ---
+  // Default value (if no risk data available)
   let orbitSpeed = 0.00005 + Math.random() * 0.0001;
 
-  // ---- Nếu có risk → tính orbitSpeed từ Vel km/s + tô màu theo PS cum ----
+  // If risk data available → compute from relative velocity and color by PS value.
   if (risk) {
     const vRel = Number(risk["Vel km/s"]) || 0;
     const r_su_orbit = mesh.position.length();
     const omega = vrelToOmega(vRel, r_su_orbit);
     orbitSpeed = omega;
 
+    // --- Color by cumulative Palermo Scale (PS cum) ---
     const psCum = Number(risk["PS cum"]);
     if (psCum > 0) {
       mesh.material.color.setHex(0xff0000);
-      // tránh emissive mặc định để không “lệch ánh sáng” (nếu cần, bật khi hover)
       mesh.material.emissive = new THREE.Color(0xaa0000);
       mesh.material.emissiveIntensity = 0.15;
     } else if (psCum > -1) {
@@ -251,6 +272,7 @@ function createAsteroidMesh(elements) {
     }
     mesh.material.needsUpdate = true;
 
+    // Store detailed risk metadata for interaction/display
     mesh.userData.risk = {
       id,
       diameter_m: d_m,
@@ -261,10 +283,12 @@ function createAsteroidMesh(elements) {
     };
   }
 
-  const M0 = THREE.MathUtils.degToRad(elements["mean anomaly"]); // tại Epoch(MJD)
-  const epochMjdAst = Number(elements["Epoch(MJD)"]) || simMJD;  // fallback
-  const n = meanMotionRadPerSec(elements.a);
+  // --- Orbital parameters for simulation ---
+  const M0 = THREE.MathUtils.degToRad(elements["mean anomaly"]); // Mean anomaly at epoch
+  const epochMjdAst = Number(elements["Epoch(MJD)"]) || simMJD;  // Epoch (fallback to sim time)
+  const n = meanMotionRadPerSec(elements.a);              // Mean motion [rad/s]  
 
+  // Store metadata for animation and info panels
   mesh.userData = {
     ...mesh.userData,
     elements,
@@ -275,6 +299,7 @@ function createAsteroidMesh(elements) {
     sizeSource: d_m ? (risk && Number.isFinite(Number(risk.m)) ? "risk.m" : "H-based") : "random"
   };
 
+  // Add asteroid to scene
   scene.add(mesh);
   return mesh;
 }
@@ -346,83 +371,69 @@ const customContainer = document.getElementById('gui-container');
 customContainer.appendChild(gui.domElement);
 // ****** SETTINGS FOR INTERACTIVE CONTROLS  ******
 const settings = {
-  accelerationOrbit: 1,
-  acceleration: 1,
-  sunIntensity: 1.9,
-  timeScale: TIME_SCALE ?? 5e5,
-  filterDangerousOnly: false,
-  simDateISO: '',
-  neoFraction: 0.001,        // %NEO: phần trăm số lượng NEO được hiển thị (0-1)
-  showOrbitLines: true       // bật/tắt đường quỹ đạo của NEO
+  accelerationOrbit: 1,       // Orbital speed multiplier
+  acceleration: 1,            // General time acceleration factor
+  sunIntensity: 1.9,          // Light intensity for the Sun
+  timeScale: TIME_SCALE ?? 5e5, // Simulation time scale (seconds per real second)
+  filterDangerousOnly: false, // Show only potentially hazardous asteroids
+  simDateISO: '',             // Current simulated date (ISO string)
+  neoFraction: 0.001,         // Fraction of NEOs displayed (0–1)
+  showOrbitLines: true        // Toggle visibility of orbit lines
 };
-// function updateAsteroidVisibility() {
-//   visualAsteroids.forEach(mesh => {
-//     const isDanger = !!mesh.userData.isDanger;
-//     const visible  = settings.filterDangerousOnly ? isDanger : true;
-//     mesh.visible = visible;
 
-//     // also toggle the orbit line tied to this mesh
-//     const line = mesh.userData.orbitLine;
-//     if (line) line.visible = visible;
-//   });
-// }
-// function updateOrbitLineVisibility() {
-//   const totalAsteroids = visualAsteroids.length;
-//   const visibleCount = Math.floor(totalAsteroids * settings.orbitLineFraction);
-
-//   visualAsteroids.forEach((ast, i) => {
-//     const isVisible = i < visibleCount;
-    
-//     // Toggle the asteroid mesh itself
-//     ast.visible = isVisible;
-
-//     // Toggle its orbit line
-//     if (ast.userData.orbitLine) {
-//       ast.userData.orbitLine.visible = isVisible;
-//     }
-//   });
-// }
+// --- Visibility management ---
+// Applies visibility filters to asteroids and their orbit lines based on settings.
 function applyVisibility() {
   const total = visualAsteroids.length;
   const quota = Math.floor(total * THREE.MathUtils.clamp(settings.neoFraction, 0, 1));
 
   visualAsteroids.forEach((ast, i) => {
+    // Filter: visible if within quota and passes danger filter
     const passDanger = !settings.filterDangerousOnly || !!ast.userData.isDanger;
     const passQuota  = i < quota;
 
-    // Chỉ điều khiển mesh theo các filter
+    // Apply visibility to mesh
     ast.visible = passDanger && passQuota;
 
-    // Orbit line: phụ thuộc vào mesh.visible và checkbox "Orbit line"
+    // Orbit line visibility depends on mesh and user setting
     const line = ast.userData.orbitLine;
     if (line) line.visible = settings.showOrbitLines && ast.visible;
   });
 }
 
 
-gui.add(settings, 'accelerationOrbit', 0, 10).onChange(value => {
-});
-gui.add(settings, 'acceleration', 0, 10).onChange(value => {
-});
-gui.add(settings, 'sunIntensity', 1, 10).onChange(value => {
-  sunMat.emissiveIntensity = value;
-});
+// ****** GUI CONTROLS ******
+
+// Adjustable simulation parameters (linked to dat.GUI)
+gui.add(settings, 'accelerationOrbit', 0, 10)
+  .onChange(value => {});
+
+gui.add(settings, 'acceleration', 0, 10)
+  .onChange(value => {});
+
+gui.add(settings, 'sunIntensity', 1, 10)
+  .onChange(value => {
+    sunMat.emissiveIntensity = value; // Adjust sun brightness
+  });
+
 gui.add(settings, 'timeScale', 1e4, 2e6);
 // .onChange(v => { TIME_SCALE = v; });
+
 gui.add(settings, 'filterDangerousOnly')
   .name('Dangerous only')
   .onChange(applyVisibility);
 
-gui.add(settings, 'simDateISO').name('Sim Date').listen();
+gui.add(settings, 'simDateISO')
+  .name('Sim Date')
+  .listen();
 
 gui.add(settings, 'neoFraction', 0, 1, 0.01)
-   .name('%NEO')
-   .onChange(applyVisibility);
+  .name('%NEO')
+  .onChange(applyVisibility);
 
 gui.add(settings, 'showOrbitLines')
-   .name('Orbit line')
-   .onChange(applyVisibility);
-
+  .name('Orbit line')
+  .onChange(applyVisibility);
 // Create tooltip for element
 const guiTooltip = document.createElement('div');
 guiTooltip.className = 'gui-tooltip';
@@ -486,51 +497,64 @@ Object.entries(guiTooltips).forEach(([prop, text]) => {
 });
 
 
-// mouse movement
+// ****** MOUSE INTERACTION ******
+
+// Raycasting setup for mouse-based object selection
 const raycaster = new THREE.Raycaster();
 const mouse = new THREE.Vector2();
 
+// Updates mouse coordinates for raycasting
 function onMouseMove(event) {
-    event.preventDefault();
-    mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
-    mouse.y = - (event.clientY / window.innerHeight) * 2 + 1;
+  event.preventDefault();
+  mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+  mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
 }
 
-// ******  SELECT PLANET  ******
-let selectedPlanet = null;
-let isMovingTowardsPlanet = false;
-let targetCameraPosition = new THREE.Vector3();
-let offset;
 
+// ****** SELECT PLANET ******
+
+let selectedPlanet = null;          // Currently selected planet
+let isMovingTowardsPlanet = false;  // Camera movement flag
+let targetCameraPosition = new THREE.Vector3();
+let offset;                         // Distance from target when zooming in
+
+// Handles planet selection via mouse click
 function onDocumentMouseDown(event) {
   event.preventDefault();
 
+  // Update raycaster from mouse position
   mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
-  mouse.y = - (event.clientY / window.innerHeight) * 2 + 1;
-
+  mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
   raycaster.setFromCamera(mouse, camera);
-  var intersects = raycaster.intersectObjects(raycastTargets);
+
+  // Detect intersections
+  const intersects = raycaster.intersectObjects(raycastTargets);
 
   if (intersects.length > 0) {
     const clickedObject = intersects[0].object;
     selectedPlanet = identifyPlanet(clickedObject);
-    if (selectedPlanet) {
-      closeInfoNoZoomOut();
-      
-      settings.accelerationOrbit = 0; // Stop orbital movement
 
-      // Update camera to look at the selected planet
+    if (selectedPlanet) {
+      closeInfoNoZoomOut();                 // Hide previous info panel
+      settings.accelerationOrbit = 0;       // Pause orbital motion
+
+      // Focus camera on selected planet
       const planetPosition = new THREE.Vector3();
       selectedPlanet.planet.getWorldPosition(planetPosition);
       controls.target.copy(planetPosition);
-      camera.lookAt(planetPosition); // Orient the camera towards the planet
+      camera.lookAt(planetPosition);
 
-      targetCameraPosition.copy(planetPosition).add(camera.position.clone().sub(planetPosition).normalize().multiplyScalar(offset));
+      // Move camera toward target with offset
+      targetCameraPosition.copy(planetPosition)
+        .add(camera.position.clone().sub(planetPosition).normalize().multiplyScalar(offset));
+
       isMovingTowardsPlanet = true;
     }
   }
 }
 
+// --- Identify clicked planet ---
+// Determines which planet was clicked and sets camera offset for zoom.
 function identifyPlanet(clickedObject) {
   // Logic to identify which planet was clicked based on the clicked object, different offset for camera distance
         if (clickedObject.material === mercury.planet.material) {
@@ -566,6 +590,7 @@ function identifyPlanet(clickedObject) {
 }
 
 // ******  SHOW PLANET INFO AFTER SELECTION  ******
+// Displays info panel for the selected planet.
 function showPlanetInfo(planet) {
   var info = document.getElementById('planetInfo');
   var name = document.getElementById('planetName');
@@ -576,9 +601,12 @@ function showPlanetInfo(planet) {
 
   info.style.display = 'block';
 }
+
+// --- Zoom out / close info panel ---
 let isZoomingOut = false;
 let zoomOutTargetPosition = new THREE.Vector3(-175, 115, 5);
-// close 'x' button function
+
+// Close info panel and zoom camera out
 function closeInfo() {
   var info = document.getElementById('planetInfo');
   info.style.display = 'none';
@@ -587,6 +615,7 @@ function closeInfo() {
   controls.target.set(0, 0, 0);
 }
 window.closeInfo = closeInfo;
+
 // close info when clicking another planet
 function closeInfoNoZoomOut() {
   var info = document.getElementById('planetInfo');
@@ -719,56 +748,43 @@ function createPlanet(planetName, size, position, tilt, texture, bump, ring, atm
   return {name, planet, planet3d, Atmosphere, moons, planetSystem, Ring};
 }
 
+// --- Load asteroid and risk data ---
+// Load current epoch orbital elements
 let data = await readJSON('/data/cur_epoch_kep.json');
-const asteroidElements = data["data"]; // limit to first 2000 for performance
+const asteroidElements = data["data"]; // Full dataset, can limit for performance
+
+// Determine simulation epoch (MJD) from first element with valid epoch
 const firstWithEpoch = asteroidElements.find(e => e['Epoch(MJD)'] != null);
 const epochMJD = firstWithEpoch ? Number(firstWithEpoch['Epoch(MJD)']) : 59600; // fallback
 simMJD = epochMJD;
 settings.simDateISO = mjdToDate(simMJD).toISOString().slice(0, 19) + 'Z';
 
+// Load risk datasets and merge
 data = await readJSON('/data/esa_risk_list_0.json');
-const riskData = data["data"]; // array
+const riskData = data["data"];
 
 data = await readJSON('/data/esa_risk_list_1.json');
 riskData.push(...data["data"]);
+
+// Map risk data by asteroid ID for fast lookup
 const riskById = Object.fromEntries(
   riskData.map(r => [r["Num/des."].toString(), r])
 );
 
-// Add asteroids and orbits
-// const visualAsteroids = asteroidElements.map(el => {
-//   const id = (el.Name ?? el["Num/des."] ?? "").toString();
-//   const risk = riskById[id];
-//   const isDanger = risk ? isAsteroidDangerous(risk) : false;
 
-//   const orbitLine = createAsteroidOrbitLine(el);
-//   orbitLine.material.color.setHex(isDanger ? 0xff0000 : 0xffff00);
-//   scene.add(orbitLine);
-
-//   const mesh = createAsteroidMesh(el);
-
-//   mesh.userData.isDanger  = isDanger;
-//   mesh.userData.orbitLine = orbitLine;
-
-//   if (isDanger) {
-//     mesh.material = mesh.material.clone();
-//     mesh.material.color.setHex(0xff4444);
-//     mesh.material.emissive = new THREE.Color(0xff0000);
-//     mesh.material.emissiveIntensity = 0.3;
-//   }
-//   return mesh;
-// });
+// --- Create visual asteroids ---
+// Convert orbital elements to THREE.js meshes with orbit lines
 const visualAsteroids = asteroidElements.map(el => {
   const id = (el.Name ?? el["Num/des."] ?? "").toString();
   const risk = riskById[id];
   const isDanger = risk ? isAsteroidDangerous(risk) : false;
 
-  // 1) Tạo mesh trước
+  // 1) Create asteroid mesh
   const mesh = createAsteroidMesh(el);
   mesh.userData.isDanger = isDanger;
-  mesh.renderOrder = 1; // vẽ sau line
+  mesh.renderOrder = 1; // Draw on top of orbit line
 
-  // tô màu theo danger (mỗi asteroid 1 material riêng)
+  // Color mesh if hazardous
   if (isDanger) {
     mesh.material = mesh.material.clone();
     mesh.material.color.setHex(0xff4444);
@@ -777,21 +793,23 @@ const visualAsteroids = asteroidElements.map(el => {
     mesh.material.needsUpdate = true;
   }
 
-  // 2) Tạo orbit line sau, màu theo danger, KHÔNG quyết định visible tại đây
-  const orbitLine = createAsteroidOrbitLine(el);          // hàm thuần, không đụng mesh
-  orbitLine.material = baseOrbitLineMaterial.clone();     // không share material
+  // 2) Create orbit line (independent of mesh)
+  const orbitLine = createAsteroidOrbitLine(el);
+  orbitLine.material = baseOrbitLineMaterial.clone(); // Unique material
   orbitLine.material.color.setHex(isDanger ? 0xff0000 : 0xffff00);
   orbitLine.renderOrder = 0;
 
-  // 3) Gắn vào userData để applyVisibility() quản lý
+  // 3) Attach orbit line to mesh userData for visibility control
   mesh.userData.orbitLine = orbitLine;
 
-  // 4) Thêm cả hai vào scene (trạng thái visible sẽ do applyVisibility() set)
+  // 4) Add both mesh and orbit line to the scene
   scene.add(mesh);
   scene.add(orbitLine);
 
   return mesh;
 });
+
+// Apply visibility filters based on settings
 applyVisibility();
 
 // ******  LOADING OBJECTS METHOD  ******
@@ -1090,159 +1108,180 @@ const dangerousAsteroids = riskData
 console.log("Dangerous asteroids:", dangerousAsteroids);
 
 
-function animate(){
+// -----------------------------
+// 4️⃣ Animate loop: planets, moons, asteroids, camera, and GUI
+// -----------------------------
+function animate() {
 
-  //rotating planets around the sun and itself
+  // --- Rotate planets around the Sun and themselves ---
   sun.rotateY(0.001 * settings.acceleration);
+
   mercury.planet.rotateY(0.001 * settings.acceleration);
   mercury.planet3d.rotateY(0.004 * settings.accelerationOrbit);
-  venus.planet.rotateY(0.0005 * settings.acceleration)
+
+  venus.planet.rotateY(0.0005 * settings.acceleration);
   venus.Atmosphere.rotateY(0.0005 * settings.acceleration);
   venus.planet3d.rotateY(0.0006 * settings.accelerationOrbit);
+
   earth.planet.rotateY(0.005 * settings.acceleration);
   earth.Atmosphere.rotateY(0.001 * settings.acceleration);
   earth.planet3d.rotateY(0.001 * settings.accelerationOrbit);
+
   mars.planet.rotateY(0.01 * settings.acceleration);
   mars.planet3d.rotateY(0.0007 * settings.accelerationOrbit);
+
   jupiter.planet.rotateY(0.005 * settings.acceleration);
   jupiter.planet3d.rotateY(0.0003 * settings.accelerationOrbit);
+
   saturn.planet.rotateY(0.01 * settings.acceleration);
   saturn.planet3d.rotateY(0.0002 * settings.accelerationOrbit);
+
   uranus.planet.rotateY(0.005 * settings.acceleration);
   uranus.planet3d.rotateY(0.0001 * settings.accelerationOrbit);
+
   neptune.planet.rotateY(0.005 * settings.acceleration);
   neptune.planet3d.rotateY(0.00008 * settings.accelerationOrbit);
-  pluto.planet.rotateY(0.001 * settings.acceleration)
-  pluto.planet3d.rotateY(0.00006 * settings.accelerationOrbit)
 
-// Animate Earth's moon
-if (earth.moons) {
-  earth.moons.forEach(moon => {
-    const time = performance.now();
-    const tiltAngle = 5 * Math.PI / 180;
+  pluto.planet.rotateY(0.001 * settings.acceleration);
+  pluto.planet3d.rotateY(0.00006 * settings.accelerationOrbit);
 
-    const moonX = earth.planet.position.x + moon.orbitRadius * Math.cos(time * moon.orbitSpeed);
-    const moonY = moon.orbitRadius * Math.sin(time * moon.orbitSpeed) * Math.sin(tiltAngle);
-    const moonZ = earth.planet.position.z + moon.orbitRadius * Math.sin(time * moon.orbitSpeed) * Math.cos(tiltAngle);
+  // --- Animate Earth's moons ---
+  if (earth.moons) {
+    earth.moons.forEach(moon => {
+      const time = performance.now();
+      const tiltAngle = 5 * Math.PI / 180;
 
-    moon.mesh.position.set(moonX, moonY, moonZ);
-    moon.mesh.rotateY(0.01);
-  });
-}
-// Animate Mars' moons
-if (marsMoons){
-marsMoons.forEach(moon => {
-  if (moon.mesh) {
-    const time = performance.now();
+      const moonX = earth.planet.position.x + moon.orbitRadius * Math.cos(time * moon.orbitSpeed);
+      const moonY = moon.orbitRadius * Math.sin(time * moon.orbitSpeed) * Math.sin(tiltAngle);
+      const moonZ = earth.planet.position.z + moon.orbitRadius * Math.sin(time * moon.orbitSpeed) * Math.cos(tiltAngle);
 
-    const moonX = mars.planet.position.x + moon.orbitRadius * Math.cos(time * moon.orbitSpeed);
-    const moonY = moon.orbitRadius * Math.sin(time * moon.orbitSpeed);
-    const moonZ = mars.planet.position.z + moon.orbitRadius * Math.sin(time * moon.orbitSpeed);
-
-    moon.mesh.position.set(moonX, moonY, moonZ);
-    moon.mesh.rotateY(0.001);
+      moon.mesh.position.set(moonX, moonY, moonZ);
+      moon.mesh.rotateY(0.01);
+    });
   }
-});
-}
 
-// Animate Jupiter's moons
-if (jupiter.moons) {
-  jupiter.moons.forEach(moon => {
-    const time = performance.now();
-    const moonX = jupiter.planet.position.x + moon.orbitRadius * Math.cos(time * moon.orbitSpeed);
-    const moonY = moon.orbitRadius * Math.sin(time * moon.orbitSpeed);
-    const moonZ = jupiter.planet.position.z + moon.orbitRadius * Math.sin(time * moon.orbitSpeed);
+  // --- Animate Mars' moons ---
+  if (marsMoons) {
+    marsMoons.forEach(moon => {
+      if (moon.mesh) {
+        const time = performance.now();
+        const moonX = mars.planet.position.x + moon.orbitRadius * Math.cos(time * moon.orbitSpeed);
+        const moonY = moon.orbitRadius * Math.sin(time * moon.orbitSpeed);
+        const moonZ = mars.planet.position.z + moon.orbitRadius * Math.sin(time * moon.orbitSpeed);
 
-    moon.mesh.position.set(moonX, moonY, moonZ);
-    moon.mesh.rotateY(0.01);
-  });
-}
-
-// ****** OUTLINES ON PLANETS ******
-raycaster.setFromCamera(mouse, camera);
-
-// Check for intersections
-var intersects = raycaster.intersectObjects(raycastTargets);
-
-// Reset all outlines
-outlinePass.selectedObjects = [];
-
-if (intersects.length > 0) {
-  const intersectedObject = intersects[0].object;
-
-  // If the intersected object is an atmosphere, find the corresponding planet
-  if (intersectedObject === earth.Atmosphere) {
-    outlinePass.selectedObjects = [earth.planet];
-  } else if (intersectedObject === venus.Atmosphere) {
-    outlinePass.selectedObjects = [venus.planet];
-  } else {
-    // For other planets, outline the intersected object itself
-    outlinePass.selectedObjects = [intersectedObject];
+        moon.mesh.position.set(moonX, moonY, moonZ);
+        moon.mesh.rotateY(0.001);
+      }
+    });
   }
-}
-// ******  ZOOM IN/OUT  ******
-if (isMovingTowardsPlanet) {
-  // Smoothly move the camera towards the target position
-  camera.position.lerp(targetCameraPosition, 0.03);
 
-  // Check if the camera is close to the target position
-  if (camera.position.distanceTo(targetCameraPosition) < 1) {
+  // --- Animate Jupiter's moons ---
+  if (jupiter.moons) {
+    jupiter.moons.forEach(moon => {
+      const time = performance.now();
+      const moonX = jupiter.planet.position.x + moon.orbitRadius * Math.cos(time * moon.orbitSpeed);
+      const moonY = moon.orbitRadius * Math.sin(time * moon.orbitSpeed);
+      const moonZ = jupiter.planet.position.z + moon.orbitRadius * Math.sin(time * moon.orbitSpeed);
+
+      moon.mesh.position.set(moonX, moonY, moonZ);
+      moon.mesh.rotateY(0.01);
+    });
+  }
+
+  // --- Planet outlines (hover detection) ---
+  raycaster.setFromCamera(mouse, camera);
+  const intersects = raycaster.intersectObjects(raycastTargets);
+
+  // Reset outlines
+  outlinePass.selectedObjects = [];
+
+  if (intersects.length > 0) {
+    const intersectedObject = intersects[0].object;
+
+    // Outline corresponding planet if atmosphere is hovered
+    if (intersectedObject === earth.Atmosphere) {
+      outlinePass.selectedObjects = [earth.planet];
+    } else if (intersectedObject === venus.Atmosphere) {
+      outlinePass.selectedObjects = [venus.planet];
+    } else {
+      outlinePass.selectedObjects = [intersectedObject];
+    }
+  }
+
+  // --- Camera zoom in/out logic ---
+  if (isMovingTowardsPlanet) {
+    // Smooth camera approach
+    camera.position.lerp(targetCameraPosition, 0.03);
+
+    // Stop zoom when near target
+    if (camera.position.distanceTo(targetCameraPosition) < 1) {
       isMovingTowardsPlanet = false;
       settings.accelerationOrbit = 1;
       showPlanetInfo(selectedPlanet.name);
+    }
 
-  }
-} else if (isZoomingOut) {
-  camera.position.lerp(zoomOutTargetPosition, 0.05);
+  } else if (isZoomingOut) {
+    camera.position.lerp(zoomOutTargetPosition, 0.05);
 
-  if (camera.position.distanceTo(zoomOutTargetPosition) < 1) {
+    if (camera.position.distanceTo(zoomOutTargetPosition) < 1) {
       isZoomingOut = false;
+    }
   }
-}
 
+  // --- Update controls and request next frame ---
   controls.update();
   requestAnimationFrame(animate);
+
+  // --- Advance simulation time ---
   const delta = clock.getDelta();  // seconds since last frame
-  const tFactor = settings.timeScale * settings.accelerationOrbit; // how fast sim time moves
-
-  // Advance the simulation date (MJD) by tFactor * delta seconds
+  const tFactor = settings.timeScale * settings.accelerationOrbit;
   simMJD += (delta * tFactor) / DAY_S;
-
-  // Update the GUI string occasionally (or every frame; cheap enough)
   settings.simDateISO = mjdToDate(simMJD).toISOString().slice(0, 19) + 'Z';
 
+  // --- Render scene ---
   composer.render();
+
+  // --- Update asteroid positions based on Keplerian elements ---
   visualAsteroids.forEach(ast => {
     const { elements, M0, epochMjd, nRadPerSec } = ast.userData;
     const e = elements.e;
 
-    // Thời gian mô phỏng tính từ epoch của phần tử quỹ đạo
+    // Time since epoch in seconds
     const dt_s = (simMJD - epochMjd) * DAY_S;
 
-    // Mean anomaly tại thời điểm mô phỏng
+    // Mean anomaly at simulation time
     const M = M0 + nRadPerSec * dt_s;
 
-    // Giải Kepler -> E -> true anomaly
+    // Solve Kepler -> E -> true anomaly
     const E = solveKepler(M, e);
     const nu = 2 * Math.atan2(
       Math.sqrt(1 + e) * Math.sin(E / 2),
       Math.sqrt(1 - e) * Math.cos(E / 2)
     );
 
-    // Cập nhật vị trí
+    // Update asteroid position
     const pos = orbitalElementsToPosition(elements, nu);
     ast.position.copy(pos);
 
-    // Optional: spin
+    // Optional rotation for visual effect
     ast.rotation.y += 0.001;
   });
 }
+
+// Start the animation loop
 animate();
 
+// --- Event listeners ---
+
+// Track mouse movement for raycasting & outlines
 window.addEventListener('mousemove', onMouseMove, false);
+
+// Handle mouse clicks for planet selection & camera zoom
 window.addEventListener('mousedown', onDocumentMouseDown, false);
-window.addEventListener('resize', function(){
-  camera.aspect = window.innerWidth/window.innerHeight;
+
+// Handle window resize: adjust camera and renderer
+window.addEventListener('resize', () => {
+  camera.aspect = window.innerWidth / window.innerHeight;
   camera.updateProjectionMatrix();
   renderer.setSize(window.innerWidth,window.innerHeight);
   composer.setSize(window.innerWidth,window.innerHeight);

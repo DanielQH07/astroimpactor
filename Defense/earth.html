@@ -1,19 +1,26 @@
 <head>
-    <link rel="stylesheet" href="style.css" />
-    <!-- ADD: city labels CSS -->
-    <link rel="stylesheet" href="cities.css" />
-    <!-- ADD: cities data (exports window.MAJOR_CITIES) -->
-    <script src="cities-layer.js"></script>
+    <link rel="stylesheet" href="style_earth.css" />
+
+    <script src="//cdn.jsdelivr.net/npm/globe.gl"></script>
     <!--  <script src="../../dist/globe.gl.js"></script>-->
-    <!-- FIX: use https (protocol-relative breaks under file://) -->
-    <script src="https://cdn.jsdelivr.net/npm/globe.gl"></script>
-    <!-- <script src="population-agument.js"></script> -->
 </head>
 
 <body>
     <!-- Controls Sidebar -->
     <div id="controls">
         <h3>Impact Controls</h3>
+        
+        <!-- Progress Bar for Deflection -->
+        <div class="deflection-progress">
+            <div class="label">Deflection Progress</div>
+            <div class="progress-container">
+                <div class="progress-bar">
+                    <div id="deflection-fill" class="progress-fill"></div>
+                </div>
+                <span id="deflection-percent">0%</span>
+            </div>
+            <div class="deflection-status" id="deflection-status">Ready to fire laser</div>
+        </div>
 
         <div class="label">
             Projectile Diameter
@@ -21,7 +28,7 @@
                 data-tip="The size across the asteroid. Larger diameter increases volume ~ d³, mass, and impact energy very quickly."></span>
         </div>
         <div class="row">
-            <input id="ui-diameter" type="number" min="1" step="1" value="50" />
+            <input id="ui-diameter" type="number" min="1" step="1" value="2300" />
             <select id="ui-unit">
                 <option value="m" selected>m</option>
                 <option value="km">km</option>
@@ -76,31 +83,269 @@
         <div class="row">
             <input id="ui-lng" type="number" min="-180" max="180" step="0.1" value="0" class="full" />
         </div>
-        <!-- ADD: click-to-fill note -->
-        <div id="ui-click-note" class="muted" style="margin-top:6px;font-size:12px;opacity:.8;">
-            👉 Click the globe to auto-fill coordinates.
-        </div>
 
         <button id="simulateBtn">Simulate</button>
+
+        <hr style="border-color: rgba(255,255,255,0.1); margin: 10px 0;">
+
+        <div class="label">Laser Power</div>
+        <div class="row">
+            <label>Laser Radius</label>
+            <input id="laser-radius" type="range" min="0.05" max="0.5" value="0.15" step="0.01" class="full" />
+            <span id="laser-radius-out">0.15</span>
+        </div>
+
+        <div class="row">
+            <input id="laser-power" type="range" min="0" max="100" value="50" class="full" />
+        </div>
+
+        
     </div>
 
     <div id="globeViz"></div>
     <div id="time"></div>
 
+    <!-- Bottom-right Guide -->
+    <div id="guide-toggle" class="guide">
+        <div class="guide-header">🛡️ Guide</div>
+        <div class="guide-body">
+            <p>
+                You are defending Earth. Use the satellite <strong>Laser</strong> or ground <strong>Rockets</strong>
+                to deflect the asteroid's trajectory.
+            </p>
+            <p>
+                Each hit increases <strong>Deflection Progress</strong>. At <strong>100%</strong>, the asteroid
+                is pushed away and cannot impact. If below 100%, it will stay inbound and eventually impact.
+            </p>
+            <p>
+                Adjust Angle, Velocity, Size, Density and target location to explore different scenarios.
+            </p>
+        </div>
+    </div>
+
+    <!-- Guide Popup Modal -->
+    <div id="guide-modal" class="guide-modal" aria-hidden="true">
+        <div class="guide-backdrop"></div>
+        <div class="guide-dialog" role="dialog" aria-modal="true" aria-labelledby="guide-title">
+            <div class="guide-title" id="guide-title">🛡️ How to play</div>
+            <div class="guide-content">
+                <p>
+                    You are the commander of Earth's defense. Use the satellite <strong>Laser</strong> or
+                    ground <strong>Rockets</strong> to push the asteroid off-course.
+                </p>
+                <ul>
+                    <li>Each hit fills the <strong>Deflection Progress</strong> bar.</li>
+                    <li>At <strong>100%</strong>, the asteroid is forced to miss Earth.</li>
+                    <li>Below 100%, it will remain inbound and eventually impact.</li>
+                    <li>Tune <em>Angle</em>, <em>Velocity</em>, <em>Size</em>, <em>Density</em>, and impact location.</li>
+                </ul>
+            </div>
+            <div class="guide-actions">
+                <button id="guide-close" class="primary-btn" type="button">Close</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Bottom Center Action Bar -->
+    <div id="action-bar">
+        <button id="fire-laser" class="action-btn">Fire Laser</button>
+        <button id="shoot-rocket" class="action-btn">Shoot</button>
+    </div>
+
     <script type="module">
         import {
-            TextureLoader, ShaderMaterial, Vector2,
-            Group, Mesh, MeshStandardMaterial, MeshBasicMaterial,
-            IcosahedronGeometry, ConeGeometry,
-            AdditiveBlending, Vector3,
-            Sprite, SpriteMaterial, CanvasTexture,
-            SphereGeometry,
-            // NEW: debris helpers
-            BufferGeometry, Float32BufferAttribute, Points, PointsMaterial, TetrahedronGeometry
+            BoxGeometry, MeshStandardMaterial, Mesh, MeshBasicMaterial,
+            TextureLoader, ShaderMaterial, Vector2, Vector3,
+            IcosahedronGeometry, ConeGeometry, SphereGeometry, Group,
+            CanvasTexture, SpriteMaterial, AdditiveBlending, Sprite,
+            BufferGeometry, Float32BufferAttribute, PointsMaterial, Points,
+            TetrahedronGeometry, LineBasicMaterial, LineLoop, Line, CylinderGeometry,
+            TubeGeometry, CatmullRomCurve3, Raycaster, Quaternion
         } from 'https://esm.sh/three';
+        import { GLTFLoader } from 'https://esm.sh/three/examples/jsm/loaders/GLTFLoader.js';
+        import { DRACOLoader } from 'https://esm.sh/three/examples/jsm/loaders/DRACOLoader.js';
         import * as solar from 'https://esm.sh/solar-calculator';
-        // CHANGE: also import merge
-        import { feature as topojsonFeature, merge as topojsonMerge } from 'https://esm.sh/topojson-client@3';
+
+        // Notification system
+        function showNotification(title, message, type = 'info', duration = 5000) {
+            // Remove existing notifications
+            const existingNotifications = document.querySelectorAll('.notification');
+            existingNotifications.forEach(notification => {
+                notification.classList.remove('show');
+                setTimeout(() => notification.remove(), 300);
+            });
+
+            // Create new notification
+            const notification = document.createElement('div');
+            notification.className = `notification ${type}`;
+            
+            notification.innerHTML = `
+                <button class="close-btn">&times;</button>
+                <div class="notification-title">${title}</div>
+                <div class="notification-message">${message}</div>
+            `;
+
+            document.body.appendChild(notification);
+
+            // Show notification with animation
+            setTimeout(() => {
+                notification.classList.add('show');
+            }, 100);
+
+            // Auto hide after duration
+            const autoHideTimer = setTimeout(() => {
+                notification.classList.remove('show');
+                setTimeout(() => notification.remove(), 300);
+            }, duration);
+
+            // Close button functionality
+            const closeBtn = notification.querySelector('.close-btn');
+            closeBtn.addEventListener('click', () => {
+                clearTimeout(autoHideTimer);
+                notification.classList.remove('show');
+                setTimeout(() => notification.remove(), 300);
+            });
+
+            return notification;
+        }
+
+        // Deflection Progress System
+        let deflectionProgress = 0;
+        const maxDeflectionHits = 20; // Number of hits needed to fully deflect
+        let totalHits = 0;
+
+        function updateDeflectionProgress(hitPower = 0) {
+            if (hitPower > 0) {
+                // Calculate hit strength based on power
+                const hitStrength = hitPower / 100; // 0 to 1
+                deflectionProgress = Math.min(100, deflectionProgress + (hitStrength * 5)); // Each max power hit = 20%
+                totalHits++;
+            }
+
+            // Update UI
+            const progressFill = document.getElementById('deflection-fill');
+            const progressPercent = document.getElementById('deflection-percent');
+            const deflectionStatus = document.getElementById('deflection-status');
+
+            if (progressFill) progressFill.style.width = deflectionProgress + '%';
+            if (progressPercent) progressPercent.textContent = Math.round(deflectionProgress) + '%';
+            
+            // Update status message
+            if (deflectionStatus) {
+                if (deflectionProgress >= 100) {
+                    deflectionStatus.textContent = 'Asteroid successfully deflected!';
+                    deflectionStatus.style.color = '#44ff44';
+                } else if (deflectionProgress >= 80) {
+                    deflectionStatus.textContent = 'Almost there! Keep firing!';
+                    deflectionStatus.style.color = '#ffaa44';
+                } else if (deflectionProgress >= 40) {
+                    deflectionStatus.textContent = 'Good progress! Continue firing!';
+                    deflectionStatus.style.color = '#ff8844';
+                } else if (deflectionProgress > 0) {
+                    deflectionStatus.textContent = `Hit ${totalHits}! Need more power!`;
+                    deflectionStatus.style.color = '#ff4444';
+                } else {
+                    deflectionStatus.textContent = 'Ready to fire laser';
+                    deflectionStatus.style.color = '#9db4d6';
+                }
+            }
+
+            return deflectionProgress >= 100;
+        }
+
+        function resetDeflectionProgress() {
+            deflectionProgress = 0;
+            totalHits = 0;
+            updateDeflectionProgress(0);
+        }
+
+            // Impact location and asteroid object
+            const IMPACT = { lat: 0, lng: 0 }; // change as desired
+            let objects = [];
+            const asteroid = { type: 'asteroid', lat: IMPACT.lat, lng: IMPACT.lng, altitude: 3.0 };
+            objects.push(asteroid);
+            
+            // Animation state variables
+            let hasImpacted = false;
+            let satellite; // Will be initialized when GLTF loads
+            
+            // Trajectory visualization variables (will be initialized later)
+            let trajectoryGeom, trajectoryMat, trajectoryLine;
+            let trajectoryGlowGeom, trajectoryGlowMat, trajectoryGlow;
+
+        // Function to update trajectory visualization
+        function updateTrajectoryVisualization() {
+            // Check if trajectory system is initialized
+            if (!trajectoryLine || !trajectoryGlow) {
+                return;
+            }
+            
+            const asteroidObj = objects.find(obj => obj.type === 'asteroid');
+            if (!asteroidObj || hasImpacted || !approachDir) {
+                trajectoryLine.visible = false;
+                trajectoryGlow.visible = false;
+                return;
+            }
+
+            const currentPos = lngLatToVec(asteroidObj.lng, asteroidObj.lat).multiplyScalar(asteroidObj.altitude + 1);
+            const direction = approachDir.clone().normalize();
+            
+            // Calculate trajectory for next 50 units ahead (or until it reaches far distance)
+            const trajectoryLength = 50;
+            const endPos = currentPos.clone().add(direction.clone().multiplyScalar(trajectoryLength));
+            
+            // Create line points
+            const points = [];
+            const segments = 50;
+            
+            for (let i = 0; i <= segments; i++) {
+                const t = i / segments;
+                const point = currentPos.clone().lerp(endPos, t);
+                points.push(point.x, point.y, point.z);
+            }
+            
+            // Update trajectory line geometry
+            const positionArray = new Float32BufferAttribute(points, 3);
+            trajectoryGeom.setAttribute('position', positionArray);
+            trajectoryGeom.computeBoundingSphere();
+            
+            // Update glow effect with same geometry
+            trajectoryGlowGeom.setAttribute('position', positionArray.clone());
+            trajectoryGlowGeom.computeBoundingSphere();
+            
+            // Show trajectory lines
+            trajectoryLine.visible = true;
+            trajectoryGlow.visible = true;
+            
+            // Change color based on whether asteroid will hit Earth
+            const willHitEarth = checkIfTrajectoryHitsEarth(currentPos, direction);
+            if (willHitEarth) {
+                trajectoryMat.color.setHex(0xff4444); // Red for danger
+                trajectoryGlowMat.color.setHex(0xff4444);
+            } else {
+                trajectoryMat.color.setHex(0x44ff44); // Green for safe
+                trajectoryGlowMat.color.setHex(0x44ff44);
+            }
+        }
+
+        // Helper function to check if trajectory will hit Earth
+        function checkIfTrajectoryHitsEarth(startPos, direction) {
+            // Sample points along trajectory and check distance to Earth center
+            const samples = 20;
+            const checkDistance = 30; // Check next 30 units
+            
+            for (let i = 1; i <= samples; i++) {
+                const t = (i / samples) * checkDistance;
+                const testPos = startPos.clone().add(direction.clone().multiplyScalar(t));
+                const distanceToEarth = testPos.length();
+                
+                // If any point gets too close to Earth surface
+                if (distanceToEarth < 1.1) { // Earth radius + small buffer
+                    return true;
+                }
+            }
+            return false;
+        }
 
         const dayNightShader = {
             vertexShader: `
@@ -170,8 +415,7 @@
         const timeEl = document.getElementById('time');
         timeEl.textContent = new Date(dt).toUTCString();
 
-        // FIX: use Globe factory, not `new`
-        const world = Globe()(document.getElementById('globeViz'));
+        const world = new Globe(document.getElementById('globeViz'));
 
         // Build geodesic circle coordinates (lng/lat pairs) around a center
         function circleCoords(lng, lat, radiusDeg, steps = 96) {
@@ -311,147 +555,18 @@
             return features;
         }
 
-        // NEW: preload a lightweight land mask (Natural Earth 110m)
-        let landPolys = []; // Array<Polygon>, Polygon = Array<Ring>, Ring = Array<[lng,lat]>
-        (async () => {
-            try {
-                const topo = await (await fetch('https://unpkg.com/world-atlas@2/land-110m.json')).json();
-                const landObj = topo.objects?.land;
-                if (!landObj) {
-                    console.warn('[Tsunami] land object missing in topology');
-                    landPolys = [];
-                    return;
-                }
-
-                let geom = null; // GeoJSON Geometry (Polygon/MultiPolygon)
-                // If it's a GeometryCollection, merge its geometries into one MultiPolygon
-                if (landObj.type === 'GeometryCollection') {
-                    try {
-                        geom = topojsonMerge(topo, landObj.geometries); // -> MultiPolygon
-                    } catch (e) {
-                        console.warn('[Tsunami] merge failed, fallback to feature()', e);
-                    }
-                }
-                // Fallback: try feature()
-                if (!geom) {
-                    const feat = topojsonFeature(topo, landObj);
-                    if (feat?.type === 'Feature' && feat.geometry) {
-                        geom = feat.geometry; // Polygon/MultiPolygon
-                    } else if (feat?.type === 'FeatureCollection' && landObj.geometries) {
-                        // If we still got a collection, merge it
-                        geom = topojsonMerge(topo, landObj.geometries);
-                    }
-                }
-
-                if (!geom || !geom.coordinates) {
-                    console.warn('[Tsunami] Could not extract land geometry');
-                    landPolys = [];
-                    return;
-                }
-
-                // Normalize to MultiPolygon coords array
-                const coords = (geom.type === 'MultiPolygon') ? geom.coordinates
-                    : (geom.type === 'Polygon') ? [geom.coordinates] : [];
-                // Sanitize polygons and rings
-                landPolys = coords
-                    .map(poly => Array.isArray(poly)
-                        ? poly.filter(ring => Array.isArray(ring) && ring.length >= 3)
-                        : [])
-                    .filter(poly => poly.length > 0);
-
-                console.log('[Tsunami] Land mask parsed:', { type: geom.type, polygons: landPolys.length });
-            } catch (e) {
-                landPolys = [];
-                console.warn('[Tsunami] Failed to load land mask:', e);
-            }
-        })();
-
-        // NEW: point-in-polygon helpers on lon/lat (planar ray-cast; good enough here)
-        function pointInRing(lng, lat, ring) {
-            // NEW guard
-            if (!Array.isArray(ring) || ring.length < 3) return false;
-            let inside = false;
-            for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
-                const xi = ring[i][0], yi = ring[i][1];
-                const xj = ring[j][0], yj = ring[j][1];
-                const intersect = ((yi > lat) !== (yj > lat)) &&
-                    (lng < (xj - xi) * (lat - yi) / ((yj - yi) || 1e-12) + xi);
-                if (intersect) inside = !inside;
-            }
-            return inside;
-        }
-        function pointInPolygon(lng, lat, polygon) {
-            // NEW guard
-            if (!Array.isArray(polygon) || !Array.isArray(polygon[0]) || polygon[0].length < 3) return false;
-            // polygon[0] = outer, polygon[1..] = holes
-            if (!pointInRing(lng, lat, polygon[0])) return false;
-            for (let i = 1; i < polygon.length; i++) {
-                if (pointInRing(lng, lat, polygon[i])) return false;
-            }
-            return true;
-        }
-        function isPointOnLand(lng, lat) {
-            // NEW guards
-            if (!Array.isArray(landPolys) || landPolys.length === 0) return false;
-            for (const poly of landPolys) {
-                if (!Array.isArray(poly) || !Array.isArray(poly[0]) || poly[0].length < 3) continue;
-                if (pointInPolygon(lng, lat, poly)) return true;
-            }
-            return false;
-        }
-        // NEW: expose helper for quick manual checks in console
-        window.isPointOnLand = isPointOnLand;
-
-        // NEW: estimate min great-circle distance (degrees) from a point to nearest coastline vertex
-        // 'step' samples every Nth vertex for performance (increase for speed, decrease for accuracy)
-        function minCoastDistanceDeg(lng, lat, step = 6) {
-            if (!Array.isArray(landPolys) || landPolys.length === 0) return Infinity;
-
-            const toRad = Math.PI / 180;
-            const toDeg = 180 / Math.PI;
-
-            const φ1 = lat * toRad;
-            const λ1 = lng * toRad;
-            const sinφ1 = Math.sin(φ1);
-            const cosφ1 = Math.cos(φ1);
-
-            let best = Infinity;
-
-            for (const poly of landPolys) {
-                if (!Array.isArray(poly)) continue;
-                for (const ring of poly) {
-                    if (!Array.isArray(ring) || ring.length < 3) continue;
-
-                    for (let i = 0; i < ring.length; i += Math.max(1, step)) {
-                        const coord = ring[i];
-                        if (!coord || coord.length < 2) continue;
-
-                        const L = coord[0];
-                        const A = coord[1];
-
-                        const φ2 = A * toRad;
-                        const λ2 = L * toRad;
-
-                        // spherical law of cosines
-                        const cosΔσ = sinφ1 * Math.sin(φ2) + cosφ1 * Math.cos(φ2) * Math.cos(λ2 - λ1);
-                        const Δσ = Math.acos(Math.max(-1, Math.min(1, cosΔσ)));
-                        const dDeg = Δσ * toDeg;
-
-                        if (dDeg < best) best = dDeg;
-                        // quick exit if very close
-                        if (best < 0.05) return best;
-                    }
-                }
-            }
-
-            return best;
-        }
+        const gltfLoader = new GLTFLoader();
+        const dracoLoader = new DRACOLoader();
+        dracoLoader.setDecoderPath('https://www.gstatic.com/draco/versioned/decoders/1.5.6/');
+        gltfLoader.setDRACOLoader(dracoLoader);
 
         Promise.all([
-            // FIX: use https for assets
-            new TextureLoader().loadAsync('https://cdn.jsdelivr.net/npm/three-globe/example/img/earth-day.jpg'),
-            new TextureLoader().loadAsync('https://cdn.jsdelivr.net/npm/three-globe/example/img/earth-night.jpg')
-        ]).then(([dayTexture, nightTexture]) => {
+            new TextureLoader().loadAsync('//cdn.jsdelivr.net/npm/three-globe/example/img/earth-day.jpg'),
+            new TextureLoader().loadAsync('//cdn.jsdelivr.net/npm/three-globe/example/img/earth-night.jpg'),
+            gltfLoader.loadAsync('aurab.glb'),
+            gltfLoader.loadAsync('rocket.glb')
+        ]).then(([dayTexture, nightTexture, satelliteGltf, rocketGltf]) => {
+            console.log('Satellite GLTF loaded:', satelliteGltf);
             const material = new ShaderMaterial({
                 uniforms: {
                     dayTexture: { value: dayTexture },
@@ -469,13 +584,6 @@
 
             // Shockwave ring config
             const colorInterpolator = t => `rgba(255,100,50,${Math.sqrt(1 - t)})`;
-
-            // Impact location and asteroid object
-            const IMPACT = { lat: 0, lng: 0 }; // change as desired
-            const objects = [];
-            const asteroid = { type: 'asteroid', lat: IMPACT.lat, lng: IMPACT.lng, altitude: 3.0 };
-            // NOTE: don't push asteroid on load; wait until user clicks "Simulate"
-            // objects.push(asteroid);
 
             // Build irregular asteroid mesh
             const rockGeom = new IcosahedronGeometry(1.2, 1);
@@ -574,6 +682,119 @@
             tailPivot.add(glowSprite);
             asteroidGroup.add(tailPivot);
 
+            // Satellite
+            satelliteGltf.scene.scale.set(1, 1, 1); // adjust scale as needed
+            const satelliteMesh = satelliteGltf.scene;
+            satellite = { type: 'satellite', lat: 0, lng: 0, altitude: 1.1, object: satelliteMesh };
+            objects.push(satellite);
+
+            // Rocket system setup
+            const rocketPrefab = rocketGltf?.scene || null;
+            if (rocketPrefab && rocketPrefab.traverse) {
+                rocketPrefab.traverse(n => { if (n.isMesh) { n.castShadow = false; n.receiveShadow = false; } });
+            }
+            const activeRockets = [];
+            const ROCKET_SPEED = 0.9; // world units per second
+            const ROCKET_HIT_RADIUS = 0.25;
+            const ROCKET_LIFE = 20; // seconds
+            const ROCKET_SCALE = 10; // high visibility
+
+            function spawnRocket(startPos, initialDir) {
+                if (!rocketPrefab) {
+                    showNotification('🚀 Rocket unavailable', 'rocket.glb missing or failed to load.', 'warning', 2200);
+                    return null;
+                }
+                const rocket = rocketPrefab.clone(true);
+                rocket.scale.set(ROCKET_SCALE, ROCKET_SCALE, ROCKET_SCALE);
+                const q = new Quaternion().setFromUnitVectors(new Vector3(0, 1, 0), initialDir.clone().normalize());
+                rocket.position.copy(startPos);
+                rocket.setRotationFromQuaternion(q);
+                rocket.renderOrder = 1000;
+                world.scene().add(rocket);
+                const state = { mesh: rocket, pos: startPos.clone(), vel: initialDir.clone().normalize().multiplyScalar(ROCKET_SPEED), born: performance.now() / 1000 };
+                activeRockets.push(state);
+                showNotification('🚀 Rocket launched', 'Rocket is heading to intercept the asteroid.', 'info', 1800);
+                return state;
+            }
+
+            function shootRocket() {
+                const asteroidObj = objects.find(obj => obj.type === 'asteroid');
+                if (!asteroidObj || hasImpacted) {
+                    showNotification('❌ Cannot launch', 'No valid asteroid target at this time.', 'warning', 1800);
+                    return;
+                }
+                // Launch from the predicted impact site toward the asteroid
+                const start = lngLatToVec(IMPACT.lng, IMPACT.lat).multiplyScalar(1.02);
+                const target = lngLatToVec(asteroidObj.lng, asteroidObj.lat).multiplyScalar(asteroidObj.altitude + 1);
+                const dir = target.clone().sub(start).normalize();
+                spawnRocket(start, dir);
+            }
+
+            // Laser system
+            let laserRadius = 0.15; // Increased from 0.05 to 0.15 for better visibility
+            const laserGeom = new CylinderGeometry(laserRadius, laserRadius, 1, 16);
+            const laserMat = new MeshBasicMaterial({ 
+                color: 0x00ffff, 
+                transparent: true, 
+                opacity: 1,
+                blending: AdditiveBlending,
+                depthWrite: false,
+                depthTest: false
+            });
+            const laserMesh = new Mesh(laserGeom, laserMat);
+            laserMesh.visible = false;
+            laserMesh.renderOrder = 999;
+            world.scene().add(laserMesh);
+
+            const laserGlowMat = new MeshBasicMaterial({
+                color: 0x00ffff,
+                transparent: true,
+                opacity: 0.4,
+                blending: AdditiveBlending,
+                depthWrite: false
+            });
+            const laserGlowGeom = new CylinderGeometry(laserRadius * 2.5, laserRadius * 2.5, 1, 16);
+            const laserGlowMesh = new Mesh(laserGlowGeom, laserGlowMat);
+            laserGlowMesh.visible = false;
+            laserGlowMesh.renderOrder = 998;
+            world.scene().add(laserGlowMesh);
+
+            let laserTimeoutId = null;
+
+            // Mouse interaction variables
+            let isMouseDown = false;
+            let isLaserActive = false;
+            const raycaster = new Raycaster();
+            const mouse = new Vector2();
+
+            // Satellite orbit pre-drawn as custom line
+            function lngLatToVec(lngDeg, latDeg) {
+                const toRad = Math.PI / 180;
+                const φ = latDeg * toRad, λ = lngDeg * toRad;
+                return new Vector3(
+                    Math.cos(φ) * Math.cos(λ),
+                    Math.sin(φ),
+                    Math.cos(φ) * Math.sin(λ)
+                );
+            }
+            const orbitPoints = [];
+            const numPoints = 360;
+            const orbitRadius = 1 + satellite.altitude; // 1 + 1.1 = 2.1
+            for (let i = 0; i < numPoints; i++) {
+                const lng = (i / numPoints) * 360 - 180;
+                const lat = 0; // equatorial orbit
+                const vec = lngLatToVec(lng, lat).multiplyScalar(orbitRadius);
+                orbitPoints.push(vec);
+            }
+            // Create a thick orbit line using TubeGeometry for better visibility
+            // Create orbit line với thickness nhỏ hơn
+            const orbitCurve = new CatmullRomCurve3(orbitPoints, true);
+            const orbitGeom = new TubeGeometry(orbitCurve, 360, 0.02, 8, true); // radius 0.02 thay vì 1
+            const orbitMat = new MeshBasicMaterial({ color: 0x00ff00, transparent: true, opacity: 0.8 });
+            const orbitLine = new Mesh(orbitGeom, orbitMat);
+            world.scene().add(orbitLine);
+            objects.push(satellite);
+
             // Scale asteroid initial size
             function applyAsteroidScale() {
                 const b = computeBlast();
@@ -603,22 +824,10 @@
             const R = 1;                // globe radius in world units for conversion
             const BASE_RPS = 0.6, V0_KMS = 20; // 0.6 radii/s at 20 km/s baseline
             let approachSpeedRps = BASE_RPS;
-            // NEW: gate motion
-            let simulationActive = false;
-
             function recomputeApproachSpeed() {
                 const v = Number(els.vel?.value ?? ui.velocityKms); // km/s from UI
                 const mul = Math.pow(v / V0_KMS, 0.8);              // responsive but not extreme
                 approachSpeedRps = Math.min(2.5, Math.max(0.2, BASE_RPS * mul));
-            }
-            function lngLatToVec(lngDeg, latDeg) {
-                const toRad = Math.PI / 180;
-                const φ = latDeg * toRad, λ = lngDeg * toRad;
-                return new Vector3(
-                    Math.cos(φ) * Math.cos(λ),
-                    Math.sin(φ),
-                    Math.cos(φ) * Math.sin(λ)
-                );
             }
             function vecToLngLatAlt(v) {
                 const toDeg = 180 / Math.PI;
@@ -645,26 +854,27 @@
                 const d = east.clone().multiplyScalar(Math.cos(alpha)).add(n.clone().multiplyScalar(-Math.sin(alpha))).normalize();
 
                 // Line endpoints: start some distance away along -d from the surface point
-                const D = 3.0; // radii away from surface along the line (keeps start above the globe for all angles)
+                const D = 10.0 * R; // Increased from 6.0 to 10.0 - much more time for satellite defense
                 approachEnd = n.clone().multiplyScalar(R);              // exactly at surface
                 approachStart = approachEnd.clone().add(d.clone().multiplyScalar(-D));
                 approachDir = approachEnd.clone().sub(approachStart).normalize();
                 approachLen = approachEnd.distanceTo(approachStart);
                 approachProgress = 0;
 
-                // Place asteroid at start
+                // Place asteroid at start and reset deflection state
                 const cur = approachStart.clone();
                 const llh = vecToLngLatAlt(cur);
                 asteroid.lat = llh.lat;
                 asteroid.lng = llh.lng;
                 asteroid.altitude = llh.alt;
+                asteroid.deflected = false; // Reset deflection state
             }
 
-            // Initial: do NOT auto-start the simulation
-            // applyImpactFromUI();
-            // setupStraightApproach();
-            // recomputeApproachSpeed();
-            world.objectsData(objects); // empty on load
+            // Initial placement from UI + angle
+            applyImpactFromUI();
+            setupStraightApproach();
+            recomputeApproachSpeed(); // NEW: set initial speed from slider
+            world.objectsData(objects);
 
             // Explosion group (built on impact)
             let explosionGroup = null;
@@ -784,9 +994,7 @@
 
             // Simple reset that re-applies parameters and restarts the fall
             function resetSimulation() {
-                // NEW: enable simulation only when user clicks Simulate
-                simulationActive = true;
-
+                console.log('Simulation reset');
                 blast = computeBlast();
                 applyAsteroidScale();
                 applyImpactFromUI();
@@ -795,248 +1003,77 @@
                 world.ringsData([]);
                 world.polygonsData([]);
                 if (explosionGroup) explosionGroup = null;
+                
+                // Hide trajectory line
+                if (trajectoryLine) trajectoryLine.visible = false;
+                if (trajectoryGlow) trajectoryGlow.visible = false;
+                
+                // Reset deflection progress
+                resetDeflectionProgress();
 
                 // Reset straight-line approach
                 objects.length = 0;
                 setupStraightApproach();
-                recomputeApproachSpeed();
+                recomputeApproachSpeed(); // NEW: refresh speed from current slider
+                
+                // Reset asteroid object completely
+                asteroid.deflected = false; // Clear deflection state
                 objects.push(asteroid);
+                if (satellite) objects.push(satellite); // add satellite back if it exists
                 world.objectsData(objects);
 
                 hasImpacted = false;
                 craterPlaced = false;
+                satelliteAngle = 90; // reset satellite position
             }
             els.simulate.addEventListener('click', resetSimulation);
 
-            // Update approach when changing angle (only while running and before impact)
+            // Update approach when changing angle (before impact)
             els.angle.addEventListener('change', () => {
-                if (simulationActive && !hasImpacted) {
+                if (!hasImpacted) {
                     applyImpactFromUI();
                     setupStraightApproach();
                     world.objectsData(objects);
                 }
             });
 
-            // NEW: update speed live only while running and before impact
+            // NEW: update speed live when Velocity slider changes (before impact)
             els.vel.addEventListener('input', () => {
-                if (simulationActive && !hasImpacted) recomputeApproachSpeed();
+                if (!hasImpacted) recomputeApproachSpeed();
             });
 
-            // --- Markers data ---
+            // --- Add Tunguska marker (DOM-based popup) ---
             const TUNGUSKA = { lat: 60 + 55 / 60, lng: 101 + 57 / 60, id: 'tunguska' };
-            const CHELYABINSK = { lat: 55.150, lng: 61.410, id: 'chelyabinsk' };
-            // NEW: Nördlinger Ries (48°53'03"N, 010°33'25"E)
-            const RIES = { lat: 48 + 53 / 60 + 3 / 3600, lng: 10 + 33 / 60 + 25 / 3600, id: 'ries' };
-            // NEW: Chesapeake Bay impact crater (37°17′N 76°1′W)
-            const CHESAPEAKE = { lat: 37 + 17 / 60, lng: -(76 + 1 / 60), id: 'chesapeake' };
-            // NEW: Chicxulub crater (21°24′0″N 89°31′0″W)
-            const CHICXULUB = { lat: 21 + 24 / 60 + 0 / 3600, lng: -(89 + 31 / 60 + 0 / 3600), id: 'chicxulub' };
-            // NEW: 2009 Sulawesi superbolide (4.2S, 120.6E)
-            const SULAWESI = { lat: -4.2, lng: 120.6, id: 'sulawesi' };
-            // NEW: Vredefort impact (27°0′0″S 27°30′0″E)
-            const VREDEFORT = { lat: -(27 + 0 / 60 + 0 / 3600), lng: 27 + 30 / 60 + 0 / 3600, id: 'vredefort' };
 
-            // ADD: convert global city list to Globe html elements (reduced set)
-            const CITIES_SRC = (window.IMPORTANT_CITIES || window.MAJOR_CITIES || []);
-            const CITIES = CITIES_SRC.map((c, i) => ({
-                id: `city:${i}`,
-                kind: 'city',
-                name: c.name,
-                lat: Number(c.lat),
-                lng: Number(c.lon)
-            }));
-
-            // Refs for viewport placement
-            let tunguskaWrap = null, tunguskaCard = null;
-            let chelyabinskWrap = null, chelyabinskCard = null;
-            // NEW: refs for Ries
-            let riesWrap = null, riesCard = null;
-            // NEW: refs for Chesapeake
-            let chesapeakeWrap = null, chesapeakeCard = null;
-            // NEW: refs for Chicxulub
-            let chicxulubWrap = null, chicxulubCard = null;
-            // NEW: refs for Sulawesi
-            let sulawesiWrap = null, sulawesiCard = null;
-            // NEW: refs for Vredefort
-            let vredefortWrap = null, vredefortCard = null;
-
-            // NEW: global helper to close any open info cards
-            function closeAllCards(exceptEl = null) {
-                document.querySelectorAll('.gcard.show').forEach(el => {
-                    if (!exceptEl || el !== exceptEl) el.classList.remove('show');
-                });
-            }
-            // Close cards when clicking anywhere outside (e.g., sidebar, globe, etc.)
-            document.addEventListener('click', () => closeAllCards());
-
-            // Viewport-aware placement (reusable for any card)
-            function placeCard(cardEl) {
-                if (!cardEl || !cardEl.classList.contains('show')) return;
-
-                // Default above-left
-                cardEl.style.left = '14px';
-                cardEl.style.right = '';
-                cardEl.style.top = '-8px';
-                cardEl.style.transform = 'translateY(-100%)';
-
-                const pad = 10;
-                const vw = window.innerWidth, vh = window.innerHeight;
-                let r = cardEl.getBoundingClientRect();
-
-                // Flip horizontally if hitting right
-                if (r.right > vw - pad) {
-                    cardEl.style.left = '';
-                    cardEl.style.right = '14px';
-                    r = cardEl.getBoundingClientRect();
-                }
-                // Place below if top clips
-                if (r.top < pad) {
-                    cardEl.style.top = '8px';
-                    cardEl.style.transform = 'none';
-                    r = cardEl.getBoundingClientRect();
-                }
-                // Gentle clamps
-                if (r.left < pad) { cardEl.style.left = `${pad}px`; cardEl.style.right = ''; }
-                if (r.right > vw - pad) { cardEl.style.right = `${pad}px`; cardEl.style.left = ''; }
-                if (r.top < pad) { cardEl.style.top = `${pad}px`; cardEl.style.transform = 'none'; }
-                // If still off-screen at bottom, revert above
-                if (r.bottom > vh - pad) {
-                    cardEl.style.top = '-8px';
-                    cardEl.style.transform = 'translateY(-100%)';
-                }
-            }
-            function placeAllCards() {
-                placeCard(tunguskaCard);
-                placeCard(chelyabinskCard);
-                placeCard(riesCard);
-                placeCard(chesapeakeCard);
-                placeCard(chicxulubCard);
-                placeCard(sulawesiCard);
-                // NEW
-                placeCard(vredefortCard);
-            }
-
-            // Prefill + run for Tunguska (unchanged)
+            // Helper to fill UI and run the simulation with preset Tunguska params
             function runTunguskaSimulation() {
+                // Prefill UI as in your screenshot/baseline
                 els.diameter.value = '60';
                 els.unit.value = 'm';
                 els.density.value = '2750';
                 els.angle.value = '45';
                 els.vel.value = '20';
-                els.lat.value = (60 + 55 / 60).toFixed(4);
-                els.lng.value = (101 + 57 / 60).toFixed(4);
+                els.lat.value = TUNGUSKA.lat.toFixed(4);
+                els.lng.value = TUNGUSKA.lng.toFixed(4);
 
+                // Update labels and slider fill via existing listeners
                 els.angle.dispatchEvent(new Event('input', { bubbles: true }));
                 els.vel.dispatchEvent(new Event('input', { bubbles: true }));
-                ['diameter', 'unit', 'density', 'lat', 'lng'].forEach(k => els[k].dispatchEvent(new Event('change', { bubbles: true })));
-                if (typeof recomputeApproachSpeed === 'function') recomputeApproachSpeed();
+                els.diameter.dispatchEvent(new Event('change', { bubbles: true }));
+                els.unit.dispatchEvent(new Event('change', { bubbles: true }));
+                els.density.dispatchEvent(new Event('change', { bubbles: true }));
+                els.lat.dispatchEvent(new Event('change', { bubbles: true }));
+                els.lng.dispatchEvent(new Event('change', { bubbles: true }));
+
+                // Recompute speed now that velocity might have changed
+                if (typeof recomputeApproachSpeed === 'function') {
+                    recomputeApproachSpeed();
+                }
+                // Start simulation
                 resetSimulation();
             }
 
-            // Prefill + run for Chelyabinsk
-            function runChelyabinskSimulation() {
-                els.diameter.value = '20';
-                els.unit.value = 'm';
-                els.density.value = '3300';
-                els.angle.value = '20';
-                els.vel.value = '19';
-                els.lat.value = CHELYABINSK.lat.toFixed(4);
-                els.lng.value = CHELYABINSK.lng.toFixed(4);
-
-                els.angle.dispatchEvent(new Event('input', { bubbles: true }));
-                els.vel.dispatchEvent(new Event('input', { bubbles: true }));
-                ['diameter', 'unit', 'density', 'lat', 'lng'].forEach(k => els[k].dispatchEvent(new Event('change', { bubbles: true })));
-                if (typeof recomputeApproachSpeed === 'function') recomputeApproachSpeed();
-                resetSimulation();
-            }
-
-            // NEW: Prefill + run for Nördlinger Ries
-            function runRiesSimulation() {
-                // Use compact defaults (matches your screenshot)
-                els.diameter.value = '1500';
-                els.unit.value = 'm';
-                els.density.value = '2750';
-                els.angle.value = '30';
-                els.vel.value = '20';
-                els.lat.value = (48 + 53 / 60 + 3 / 3600).toFixed(4);   // 48.8842
-                els.lng.value = (10 + 33 / 60 + 25 / 3600).toFixed(4);  // 10.5569
-
-                els.angle.dispatchEvent(new Event('input', { bubbles: true }));
-                els.vel.dispatchEvent(new Event('input', { bubbles: true }));
-                ['diameter', 'unit', 'density', 'lat', 'lng'].forEach(k => els[k].dispatchEvent(new Event('change', { bubbles: true })));
-                if (typeof recomputeApproachSpeed === 'function') recomputeApproachSpeed();
-                resetSimulation();
-            }
-
-            // NEW: Prefill + run for Chesapeake Bay
-            function runChesapeakeSimulation() {
-                els.diameter.value = '3';
-                els.unit.value = 'km';
-                els.density.value = '2750';
-                els.angle.value = '45';
-                els.vel.value = '18';
-                els.lat.value = (37 + 17 / 60).toFixed(4);      // 37.2833
-                els.lng.value = (-(76 + 1 / 60)).toFixed(4);     // -76.0167
-
-                els.angle.dispatchEvent(new Event('input', { bubbles: true }));
-                els.vel.dispatchEvent(new Event('input', { bubbles: true }));
-                ['diameter', 'unit', 'density', 'lat', 'lng'].forEach(k => els[k].dispatchEvent(new Event('change', { bubbles: true })));
-                if (typeof recomputeApproachSpeed === 'function') recomputeApproachSpeed();
-                resetSimulation();
-            }
-
-            // NEW: Prefill + run for Chicxulub crater
-            function runChicxulubSimulation() {
-                els.diameter.value = '10';     // ~10 km impactor
-                els.unit.value = 'km';
-                els.density.value = '2750';
-                els.angle.value = '45';
-                els.vel.value = '20';
-                els.lat.value = (21 + 24 / 60).toFixed(4);        // 21.4000
-                els.lng.value = (-(89 + 31 / 60)).toFixed(4);     // -89.5167
-
-                els.angle.dispatchEvent(new Event('input', { bubbles: true }));
-                els.vel.dispatchEvent(new Event('input', { bubbles: true }));
-                ['diameter', 'unit', 'density', 'lat', 'lng'].forEach(k => els[k].dispatchEvent(new Event('change', { bubbles: true })));
-                if (typeof recomputeApproachSpeed === 'function') recomputeApproachSpeed();
-                resetSimulation();
-            }
-
-            // NEW: Prefill + run for 2009 Sulawesi superbolide
-            function runSulawesiSimulation() {
-                els.diameter.value = '10';         // ~10 m object
-                els.unit.value = 'm';
-                els.density.value = '2750';
-                els.angle.value = '45';
-                els.vel.value = '19.2';
-                els.lat.value = (-4.2).toFixed(4);     // -4.2000
-                els.lng.value = (120.6).toFixed(4);    // 120.6000
-
-                els.angle.dispatchEvent(new Event('input', { bubbles: true }));
-                els.vel.dispatchEvent(new Event('input', { bubbles: true }));
-                ['diameter', 'unit', 'density', 'lat', 'lng'].forEach(k => els[k].dispatchEvent(new Event('change', { bubbles: true })));
-                if (typeof recomputeApproachSpeed === 'function') recomputeApproachSpeed();
-                resetSimulation();
-            }
-
-            // NEW: Prefill + run for Vredefort impact
-            function runVredefortSimulation() {
-                els.diameter.value = '20';     // 20 km projectile
-                els.unit.value = 'km';
-                els.density.value = '2750';
-                els.angle.value = '45';
-                els.vel.value = '20';
-                els.lat.value = (-(27 + 0 / 60)).toFixed(4);   // -27.0000
-                els.lng.value = (27 + 30 / 60).toFixed(4);     // 27.5000
-
-                els.angle.dispatchEvent(new Event('input', { bubbles: true }));
-                els.vel.dispatchEvent(new Event('input', { bubbles: true }));
-                ['diameter', 'unit', 'density', 'lat', 'lng'].forEach(k => els[k].dispatchEvent(new Event('change', { bubbles: true })));
-                if (typeof recomputeApproachSpeed === 'function') recomputeApproachSpeed();
-                resetSimulation();
-            }
-
-            // Build Tunguska element (click-to-toggle)
+            // Create the HTML marker element
             function makeTunguskaElement() {
                 const wrap = document.createElement('div');
                 wrap.className = 'geo-marker';
@@ -1050,371 +1087,30 @@
                 card.innerHTML = `
 					<div class="gcard-title">Tunguska Event (1908)</div>
 					<div class="gcard-body">
-						A massive airburst over Siberia that flattened roughly 2,000 km² of forest.
-						Likely caused by a stony asteroid about 50-60 m entering at high speed.
+						A powerful airburst over Siberia flattened ~2,000 km² of forest.
+						Likely a stony asteroid ~50–60 m across entering at high speed.
 					</div>
-					<img class="gcard-img" loading="lazy"
-						src="https://cdn.britannica.com/00/199200-138-9222B648/video-overview-Tunguska-event.jpg?w=800&h=450&c=crop"
-						alt="Tunguska Event overview image"/>
-					<div class="gcard-actions">
-						<button class="gcard-btn" type="button">Simulate this event</button>
-						<a class="gwiki" href="https://en.wikipedia.org/wiki/Tunguska_event" target="_blank" rel="noopener" aria-label="Read more">🔍</a>
-					</div>
+					<button class="gcard-btn" type="button">Simulate this event</button>
 				`;
                 wrap.appendChild(card);
 
-                // Save refs
-                tunguskaWrap = wrap;
-                tunguskaCard = card;
-
-                // Prevent outside-close when interacting inside the card
-                card.addEventListener('click', (e) => e.stopPropagation());
-
-                // Click to toggle and place
-                pin.addEventListener('click', (e) => {
-                    e.stopPropagation();
-                    card.classList.toggle('show');
-                    if (card.classList.contains('show')) {
-                        // Close any other open cards
-                        closeAllCards(card);
-                        requestAnimationFrame(() => placeCard(card));
-                    }
-                });
-
-                // Simulate button
+                // Click handler
                 card.querySelector('.gcard-btn')?.addEventListener('click', (e) => {
                     e.stopPropagation();
-                    card.classList.remove('show');
                     runTunguskaSimulation();
                 });
 
-                return wrap;
-            }
-
-            // Build Chelyabinsk element (click-to-toggle)
-            function makeChelyabinskElement() {
-                const wrap = document.createElement('div');
-                wrap.className = 'geo-marker';
-
-                const pin = document.createElement('div');
-                pin.className = 'gpin';
-                wrap.appendChild(pin);
-
-                const card = document.createElement('div');
-                card.className = 'gcard';
-                card.innerHTML = `
-					<div class="gcard-title">Chelyabinsk meteor (2013)</div>
-					<div class="gcard-body">
-						An airburst over Chelyabinsk, Russia that injured ~1,500 people and damaged thousands of buildings.
-						Caused by a ~20 m stony meteoroid entering the atmosphere at high speed.
-					</div>
-					<img class="gcard-img" loading="lazy"
-						src="https://upload.wikimedia.org/wikipedia/commons/thumb/8/82/Meteorite_explosion_over_Chelyabinsk_on_February_15%2C_2013.gif/375px-Meteorite_explosion_over_Chelyabinsk_on_February_15%2C_2013.gif"
-						alt="Chelyabinsk meteor event image"/>
-					<div class="gcard-actions">
-						<button class="gcard-btn" type="button">Simulate this event</button>
-						<a class="gwiki" href="https://en.wikipedia.org/wiki/Chelyabinsk_meteor" target="_blank" rel="noopener" aria-label="Read more">🔍</a>
-					</div>
-				`;
-                wrap.appendChild(card);
-
-                // Save refs
-                chelyabinskWrap = wrap;
-                chelyabinskCard = card;
-
-                // Prevent outside-close when interacting inside the card
-                card.addEventListener('click', (e) => e.stopPropagation());
-
-                // Click to toggle and place
-                pin.addEventListener('click', (e) => {
-                    e.stopPropagation();
-                    card.classList.toggle('show');
-                    if (card.classList.contains('show')) {
-                        // Close any other open cards
-                        closeAllCards(card);
-                        requestAnimationFrame(() => placeCard(card));
-                    }
-                });
-                // Simulate button
-                card.querySelector('.gcard-btn')?.addEventListener('click', (e) => {
-                    e.stopPropagation();
-                    card.classList.remove('show');
-                    runChelyabinskSimulation();
-                });
+                // Keep card visible while hovering
+                wrap.addEventListener('mouseenter', () => card.classList.add('show'));
+                wrap.addEventListener('mouseleave', () => card.classList.remove('show'));
 
                 return wrap;
             }
 
-            // NEW: Build Nördlinger Ries element (click-to-toggle)
-            function makeRiesElement() {
-                const wrap = document.createElement('div');
-                wrap.className = 'geo-marker';
-
-                const pin = document.createElement('div');
-                pin.className = 'gpin';
-                wrap.appendChild(pin);
-
-                const card = document.createElement('div');
-                card.className = 'gcard';
-                card.innerHTML = `
-					<div class="gcard-title">Nördlinger Ries crater</div>
-					<div class="gcard-body">
-						An impact structure in Bavaria, Germany (~24 km diameter), formed about 14.6 million years ago.
-					</div>
-					<img class="gcard-img" loading="lazy"
-						src="https://upload.wikimedia.org/wikipedia/commons/thumb/9/99/N%C3%B6rdlinger_Ries_Relief_Map%2C_SRTM-1.jpg/1280px-N%C3%B6rdlinger_Ries_Relief_Map%2C_SRTM-1.jpg"
-						alt="Nördlinger Ries relief map"/>
-					<div class="gcard-actions">
-						<button class="gcard-btn" type="button">Simulate this event</button>
-						<a class="gwiki" href="https://en.wikipedia.org/wiki/N%C3%B6rdlinger_Ries" target="_blank" rel="noopener" aria-label="Read more">🔍</a>
-					</div>
-				`;
-                wrap.appendChild(card);
-
-                // Save refs
-                riesWrap = wrap;
-                riesCard = card;
-
-                // Prevent outside-close when interacting inside the card
-                card.addEventListener('click', (e) => e.stopPropagation());
-
-                // Click to toggle and place
-                pin.addEventListener('click', (e) => {
-                    e.stopPropagation();
-                    card.classList.toggle('show');
-                    if (card.classList.contains('show')) {
-                        closeAllCards(card);
-                        requestAnimationFrame(() => placeCard(card));
-                    }
-                });
-
-                // Simulate button
-                card.querySelector('.gcard-btn')?.addEventListener('click', (e) => {
-                    e.stopPropagation();
-                    card.classList.remove('show');
-                    runRiesSimulation();
-                });
-
-                return wrap;
-            }
-
-            // NEW: Build Chesapeake Bay element (click-to-toggle)
-            function makeChesapeakeElement() {
-                const wrap = document.createElement('div');
-                wrap.className = 'geo-marker';
-
-                const pin = document.createElement('div');
-                pin.className = 'gpin';
-                wrap.appendChild(pin);
-
-                const card = document.createElement('div');
-                card.className = 'gcard';
-                card.innerHTML = `
-					<div class="gcard-title">Chesapeake Bay crater</div>
-					<div class="gcard-body">
-						A buried impact structure beneath the southern Chesapeake Bay, USA (~85 km across),
-						formed during the late Eocene.
-					</div>
-					<img class="gcard-img" loading="lazy"
-						src="https://lh6.googleusercontent.com/proxy/o8c57SEela6M4zMbcaAZxmb8hG9bKTTfSYVCbq4ODCLj7smsBB76q2M8YXdQX7BRpDVTD2g1tr-egFUz1Oc_XZ1fgoXiO1M0sljLDg"
-						alt="Chesapeake Bay impact structure image"/>
-					<div class="gcard-actions">
-						<button class="gcard-btn" type="button">Simulate this event</button>
-                        <a class="gwiki" href="https://en.wikipedia.org/wiki/Chesapeake_Bay_impact_crater" target="_blank" rel="noopener" aria-label="Read more">🔍</a>
-					</div>
-				`;
-                wrap.appendChild(card);
-
-                // Save refs
-                chesapeakeWrap = wrap;
-                chesapeakeCard = card;
-
-                // Prevent outside-close when interacting inside the card
-                card.addEventListener('click', (e) => e.stopPropagation());
-
-                // Click to toggle and place
-                pin.addEventListener('click', (e) => {
-                    e.stopPropagation();
-                    card.classList.toggle('show');
-                    if (card.classList.contains('show')) {
-                        closeAllCards(card);
-                        requestAnimationFrame(() => placeCard(card));
-                    }
-                });
-
-                // Simulate button
-                card.querySelector('.gcard-btn')?.addEventListener('click', (e) => {
-                    e.stopPropagation();
-                    card.classList.remove('show');
-                    runChesapeakeSimulation();
-                });
-
-                return wrap;
-            }
-
-            // NEW: Build Chicxulub element (click-to-toggle)
-            function makeChicxulubElement() {
-                const wrap = document.createElement('div');
-                wrap.className = 'geo-marker';
-
-                const pin = document.createElement('div');
-                pin.className = 'gpin';
-                wrap.appendChild(pin);
-
-                const card = document.createElement('div');
-                card.className = 'gcard';
-                card.innerHTML = `
-					<div class="gcard-title">Chicxulub crater</div>
-					<div class="gcard-body">
-						A ~150-180 km impact structure on the Yucatán Peninsula, Mexico, formed ~66 million years ago.
-					</div>
-					<img class="gcard-img" loading="lazy"
-						src="https://www.science.org/do/10.1126/science.aaf5684/full/gg_60212w_crater-1644966022570.jpg"
-						alt="Chicxulub crater imagery"/>
-					<div class="gcard-actions">
-						<button class="gcard-btn" type="button">Simulate this event</button>
-                        <a class="gwiki" href="https://en.wikipedia.org/wiki/Chicxulub_crater" target="_blank" rel="noopener" aria-label="Read more">🔍</a>
-					</div>
-				`;
-                wrap.appendChild(card);
-
-                // Save refs
-                chicxulubWrap = wrap;
-                chicxulubCard = card;
-
-                // Prevent outside-close when interacting inside the card
-                card.addEventListener('click', (e) => e.stopPropagation());
-
-                // Click to toggle and place
-                pin.addEventListener('click', (e) => {
-                    e.stopPropagation();
-                    card.classList.toggle('show');
-                    if (card.classList.contains('show')) {
-                        closeAllCards(card);
-                        requestAnimationFrame(() => placeCard(card));
-                    }
-                });
-
-                // Simulate button
-                card.querySelector('.gcard-btn')?.addEventListener('click', (e) => {
-                    e.stopPropagation();
-                    card.classList.remove('show');
-                    runChicxulubSimulation();
-                });
-
-                return wrap;
-            }
-
-            // NEW: Build 2009 Sulawesi superbolide element (click-to-toggle)
-            function makeSulawesiElement() {
-                const wrap = document.createElement('div');
-                wrap.className = 'geo-marker';
-
-                const pin = document.createElement('div');
-                pin.className = 'gpin';
-                wrap.appendChild(pin);
-
-                const card = document.createElement('div');
-                card.className = 'gcard';
-                card.innerHTML = `
-					<div class="gcard-title">2009 Sulawesi superbolide</div>
-					<div class="gcard-body">
-						An airburst over Bone, South Sulawesi, Indonesia (Oct 2009), estimated from a small (~10 m) meteoroid.
-					</div>
-					<img class="gcard-img" loading="lazy"
-						src="https://asset-2.tribunnews.com/lampung/foto/bank/images/viral-detik-detik-diduga-meteor-jatuh-di-sulawesi-tengah-lapan-asteroid-masuk-atmosfer.jpg"
-						alt="2009 Sulawesi superbolide image"/>
-					<div class="gcard-actions">
-						<button class="gcard-btn" type="button">Simulate this event</button>
-                        <a class="gwiki" href="https://en.wikipedia.org/wiki/2009_Sulawesi_superbolide" target="_blank" rel="noopener" aria-label="Read more">🔍</a>
-					</div>
-				`;
-                wrap.appendChild(card);
-
-                // Save refs
-                sulawesiWrap = wrap;
-                sulawesiCard = card;
-
-                // Prevent outside-close when interacting inside the card
-                card.addEventListener('click', (e) => e.stopPropagation());
-
-                // Click to toggle and place
-                pin.addEventListener('click', (e) => {
-                    e.stopPropagation();
-                    card.classList.toggle('show');
-                    if (card.classList.contains('show')) {
-                        closeAllCards(card);
-                        requestAnimationFrame(() => placeCard(card));
-                    }
-                });
-
-                // Simulate button
-                card.querySelector('.gcard-btn')?.addEventListener('click', (e) => {
-                    e.stopPropagation();
-                    card.classList.remove('show');
-                    runSulawesiSimulation();
-                });
-
-                return wrap;
-            }
-
-            // NEW: Build Vredefort element (click-to-toggle)
-            function makeVredefortElement() {
-                const wrap = document.createElement('div');
-                wrap.className = 'geo-marker';
-
-                const pin = document.createElement('div');
-                pin.className = 'gpin';
-                wrap.appendChild(pin);
-
-                const card = document.createElement('div');
-                card.className = 'gcard';
-                card.innerHTML = `
-					<div class="gcard-title">Vredefort impact</div>
-					<div class="gcard-body">
-						An ancient impact structure in South Africa. Simulation uses a 20 km projectile at 20 km/s, 45°.
-					</div>
-					<img class="gcard-img" loading="lazy"
-						src="https://thesudantimes.com/wp-content/uploads/2024/06/meteor-crater.webp"
-						alt="Vredefort impact image"/>
-					<div class="gcard-actions">
-						<button class="gcard-btn" type="button">Simulate this event</button>
-                        <a class="gwiki" href="https://en.wikipedia.org/wiki/Vredefort_impact_structure" target="_blank" rel="noopener" aria-label="Read more">🔍</a>
-					</div>
-				`;
-                wrap.appendChild(card);
-
-                // Save refs
-                vredefortWrap = wrap;
-                vredefortCard = card;
-
-                // Prevent outside-close when interacting inside the card
-                card.addEventListener('click', (e) => e.stopPropagation());
-
-                // Click to toggle and place
-                pin.addEventListener('click', (e) => {
-                    e.stopPropagation();
-                    card.classList.toggle('show');
-                    if (card.classList.contains('show')) {
-                        closeAllCards(card);
-                        requestAnimationFrame(() => placeCard(card));
-                    }
-                });
-
-                // Simulate button
-                card.querySelector('.gcard-btn')?.addEventListener('click', (e) => {
-                    e.stopPropagation();
-                    card.classList.remove('show');
-                    runVredefortSimulation();
-                });
-
-                return wrap;
-            }
-
+            // Attach the htmlElements layer
             world
                 .globeMaterial(material)
-                // FIX: use https for background image
-                .backgroundImageUrl('https://cdn.jsdelivr.net/npm/three-globe/example/img/night-sky.png')
+                .backgroundImageUrl('//cdn.jsdelivr.net/npm/three-globe/example/img/night-sky.png')
                 // Crater layer (instant update, no tween)
                 .polygonsData([])
                 .polygonsTransitionDuration(0)
@@ -1424,8 +1120,7 @@
                 .polygonStrokeColor(() => 'rgba(0,0,0,0)')
                 // Rings layer (shockwave)
                 .ringsData([])
-                // CHANGE: allow per-ring color via data.colorFn; fallback to orange shockwave
-                .ringColor(d => (d && d.colorFn) ? d.colorFn : (t => `rgba(255,100,50,${Math.sqrt(1 - t)})`))
+                .ringColor(() => (t => `rgba(255,100,50,${Math.sqrt(1 - t)})`))
                 .ringMaxRadius('maxR')
                 .ringPropagationSpeed('propagationSpeed')
                 .ringRepeatPeriod('repeatPeriod')
@@ -1437,79 +1132,387 @@
                 .objectThreeObject(d => {
                     if (d.type === 'asteroid') return asteroidGroup;
                     if (d.type === 'explosion' && explosionGroup) return explosionGroup.group;
+                    if (d.type === 'satellite') return satelliteMesh;
+                    if (d.type === 'laser') return laserMesh;
                     return undefined;
                 })
-                // ADD all four markers to the HTML layer
-                .htmlElementsData([
-                    TUNGUSKA, CHELYABINSK, RIES, CHESAPEAKE, CHICXULUB, SULAWESI, VREDEFORT,
-                    ...CITIES
-                ])
-                .htmlElement(d => {
-                    if (d && d.kind === 'city') {
-                        const el = document.createElement('span');
-                        el.className = 'city-label globe-city';
-                        el.textContent = d.name;
-                        return el;
-                    }
-                    // ...existing event marker creation...
-                    if (d.id === 'tunguska') return makeTunguskaElement();
-                    if (d.id === 'chelyabinsk') return makeChelyabinskElement();
-                    if (d.id === 'ries') return makeRiesElement();
-                    if (d.id === 'chesapeake') return makeChesapeakeElement();
-                    if (d.id === 'chicxulub') return makeChicxulubElement();
-                    if (d.id === 'sulawesi') return makeSulawesiElement();
-                    if (d.id === 'vredefort') return makeVredefortElement();
-                    return document.createElement('div');
-                })
-                // CHANGE: slightly lower altitude for city labels
-                .htmlAltitude(d => (d && d.kind === 'city') ? 0.005 : 0.01)
-                .onZoom(({ lng, lat }) => {
-                    // Re-place while zooming
-                    material.uniforms.globeRotation.value.set(lng, lat);
-                    placeAllCards();
-                })
-                // ADD: click to pick impact location
-                .onGlobeClick(({ lat, lng }) => {
-                    // write to inputs
-                    els.lat.value = lat.toFixed(4);
-                    els.lng.value = lng.toFixed(4);
-                    // sync UI state
-                    ui.lat = Number(els.lat.value);
-                    ui.lng = Number(els.lng.value);
-                    // update current impact target
-                    applyImpactFromUI();
-                    // if simulation is running and not impacted, recompute the approach
-                    if (simulationActive && !hasImpacted) {
-                        setupStraightApproach();
-                        world.objectsData(objects);
-                    }
-                });
+                // Remove Tunguska marker
+                .htmlElementsData([])
+                // Keep globeRotation uniform in sync when user interacts
+                .onZoom(({ lng, lat }) => material.uniforms.globeRotation.value.set(lng, lat));
 
-            // Also re-place while orbit controls move
-            const orbit = world.controls();
-            orbit.addEventListener('change', () => placeAllCards());
-            window.addEventListener('resize', () => placeAllCards());
-            window.addEventListener('scroll', () => placeAllCards());
+            // Mouse event handlers for satellite interaction
+            function onMouseMove(event) {
+                mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+                mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+            }
+
+            function onMouseDown(event) {
+                isMouseDown = true;
+                checkSatelliteClick();
+            }
+
+            function onMouseUp(event) {
+                isMouseDown = false;
+                isLaserActive = false;
+                laserMesh.visible = false;
+            }
+
+            function checkSatelliteClick() {
+                raycaster.setFromCamera(mouse, world.camera());
+                
+                // Get satellite position in 3D space
+                const satPos = lngLatToVec(satellite.lng, satellite.lat).multiplyScalar(satellite.altitude + 1);
+                
+                // Check if click is near satellite (simplified check)
+                const satScreenPos = satPos.clone().project(world.camera());
+                const distance = Math.sqrt(
+                    Math.pow(mouse.x - satScreenPos.x, 2) + 
+                    Math.pow(mouse.y - satScreenPos.y, 2)
+                );
+                
+                if (distance < 0.1) { // Click threshold
+                    isLaserActive = true;
+                    fireLaser();
+                }
+            }
+
+            // Add event listeners
+            window.addEventListener('mousemove', onMouseMove);
+            window.addEventListener('mousedown', onMouseDown);
+            // Remove mouse event listeners
+            // window.addEventListener('mousemove', onMouseMove);
+            // window.addEventListener('mousedown', onMouseDown);
+            // window.addEventListener('mouseup', onMouseUp);
+
+            // Helper functions for laser system
+            function findNearestAsteroid() {
+                const asteroidObj = objects.find(obj => obj.type === 'asteroid');
+                if (!asteroidObj) {
+                    return null;
+                }
+                
+                const satPos = lngLatToVec(satellite.lng, satellite.lat).multiplyScalar(satellite.altitude + 1);
+                const astPos = lngLatToVec(asteroidObj.lng, asteroidObj.lat).multiplyScalar(asteroidObj.altitude + 1);
+                
+                return { position: astPos, object: asteroidObj };
+            }
+
+            // Helper function to check line of sight between satellite and asteroid
+            function hasLineOfSight(satPos, targetPos) {
+                // Check if Earth blocks the laser path
+                const direction = targetPos.clone().sub(satPos).normalize();
+                const distance = satPos.distanceTo(targetPos);
+                
+                // Sample points along the laser path
+                const samples = 20;
+                for (let i = 1; i < samples; i++) {
+                    const t = i / samples;
+                    const point = satPos.clone().add(direction.clone().multiplyScalar(distance * t));
+                    const distanceFromCenter = point.length();
+                    
+                    // If any point is inside Earth (radius = 1), line of sight is blocked
+                    if (distanceFromCenter < 1.02) { // Small buffer for atmosphere
+                        return false;
+                    }
+                }
+                return true;
+            }
+
+            function fireLaser() {
+                console.log('fireLaser() called');
+
+                const satPos = lngLatToVec(satellite.lng, satellite.lat).multiplyScalar(satellite.altitude + 1);
+                const nearestAsteroid = findNearestAsteroid();
+                let targetPos;
+
+                if (nearestAsteroid) {
+                    targetPos = nearestAsteroid.position.clone();
+
+                    if (!hasLineOfSight(satPos, targetPos)) {
+                        console.log('Cannot fire laser: Earth is blocking the path to asteroid');
+                        showNotification(
+                            '🌍 Laser Blocked!',
+                            'Cannot fire laser - Earth is blocking the path to the asteroid. Move the satellite or wait for a better alignment.',
+                            'warning',
+                            4000
+                        );
+                        return;
+                    }
+
+                    console.log('Laser targeting asteroid at:', nearestAsteroid.object.lat, nearestAsteroid.object.lng);
+                } else {
+                    const direction = satPos.clone().normalize();
+                    targetPos = satPos.clone().add(direction.multiplyScalar(10));
+                    console.log('No asteroid found, firing into space');
+                }
+
+                const laserVector = targetPos.clone().sub(satPos);
+                const distance = laserVector.length();
+                if (distance <= 1e-3) {
+                    console.warn('Laser target too close to satellite; skipping render.');
+                    return;
+                }
+
+                const laserDirection = laserVector.clone().normalize();
+                const midPoint = satPos.clone().add(targetPos).multiplyScalar(0.5);
+
+                const sliderRadius = Number(els.laserRadius.value || laserRadius);
+                laserRadius = Number.isFinite(sliderRadius) ? sliderRadius : laserRadius;
+                const currentLaserRadius = Math.max(0.1, laserRadius * 5);
+
+                if (laserMesh.geometry) {
+                    laserMesh.geometry.dispose();
+                }
+                laserMesh.geometry = new CylinderGeometry(currentLaserRadius, currentLaserRadius, distance, 32);
+
+                const laserMaterial = laserMesh.material;
+                if (laserMaterial) {
+                    laserMaterial.color.setHex(0x00ffff);
+                    laserMaterial.opacity = 1;
+                    laserMaterial.blending = AdditiveBlending;
+                    laserMaterial.depthWrite = false;
+                    laserMaterial.depthTest = false;
+                    laserMaterial.needsUpdate = true;
+                }
+
+                const orientation = new Quaternion().setFromUnitVectors(new Vector3(0, 1, 0), laserDirection);
+                laserMesh.position.copy(midPoint);
+                laserMesh.setRotationFromQuaternion(orientation);
+                laserMesh.visible = true;
+
+                if (laserGlowMesh.geometry) {
+                    laserGlowMesh.geometry.dispose();
+                }
+                laserGlowMesh.geometry = new CylinderGeometry(currentLaserRadius * 2.5, currentLaserRadius * 2.5, distance, 32);
+                laserGlowMesh.position.copy(midPoint);
+                laserGlowMesh.setRotationFromQuaternion(orientation);
+                laserGlowMesh.visible = true;
+                if (laserGlowMesh.material) {
+                    laserGlowMesh.material.opacity = 0.4;
+                    laserGlowMesh.material.color.setHex(0x00ffff);
+                    laserGlowMesh.material.needsUpdate = true;
+                }
+
+                if (laserTimeoutId) {
+                    clearTimeout(laserTimeoutId);
+                }
+                laserTimeoutId = setTimeout(() => {
+                    laserMesh.visible = false;
+                    laserGlowMesh.visible = false;
+                }, 3000);
+
+                if (nearestAsteroid && !hasImpacted) {
+                    const laserPowerValue = Number(els.laserPower.value);
+                    const fullyDeflected = updateDeflectionProgress(laserPowerValue);
+
+                    const baseForce = laserPowerValue * 0.0005;
+                    const currentVelocity = approachDir.clone().multiplyScalar(approachSpeedRps);
+                    const deflectionForce = laserDirection.clone().multiplyScalar(baseForce);
+                    const newVelocity = currentVelocity.add(deflectionForce);
+
+                    const newSpeed = newVelocity.length();
+                    if (newSpeed > 0) {
+                        approachDir = newVelocity.clone().normalize();
+                        approachSpeedRps = newSpeed;
+                    }
+
+                    if (fullyDeflected) {
+                        nearestAsteroid.object.deflected = true;
+                        showNotification(
+                            '🎉 Asteroid Fully Deflected!',
+                            'Asteroid trajectory successfully changed! Mission accomplished!',
+                            'success',
+                            4000
+                        );
+                    } else {
+                        const hitMessage = totalHits === 1 ? 'First hit!' : `Hit ${totalHits}!`;
+                        showNotification(
+                            '⚡ Laser Hit!',
+                            `${hitMessage} Deflection: ${Math.round(deflectionProgress)}%. Power: ${laserPowerValue}%`,
+                            'success',
+                            2500
+                        );
+                    }
+                } else if (!nearestAsteroid) {
+                    showNotification(
+                        '❌ Missed Target',
+                        'No asteroid in range. Laser fired into space.',
+                        'warning',
+                        2000
+                    );
+                }
+            }
+
+            // Fire Laser button event listener - moved inside Promise scope
+            els.fireLaser.addEventListener('click', () => {
+                console.log('Fire Laser button clicked');
+                fireLaser();
+            });
+
+            // Shoot Rocket button
+            const shootBtn = document.getElementById('shoot-rocket');
+            if (shootBtn) {
+                shootBtn.addEventListener('click', () => {
+                    console.log('Shoot Rocket button clicked');
+                    shootRocket();
+                });
+            }
+
+            // Update laser radius when slider changes - moved inside Promise scope
+            els.laserRadius.addEventListener('input', () => {
+                laserRadius = Number(els.laserRadius.value);
+                // Update laser material properties for better visibility
+                if (laserMesh && laserMesh.material) {
+                    laserMesh.material.opacity = 1;
+                    laserMesh.material.needsUpdate = true;
+                }
+                console.log('Laser radius updated to:', laserRadius);
+            });
 
             // Animate asteroid approach and impact + tail flicker + explosion growth
-            let hasImpacted = false;
+            // const ALTITUDE_DECAY_PER_FRAME = 0.01; // no longer used for motion
             let lastTick = performance.now();
+            let satelliteAngle = 90;
+            let laserPower = 50;
+            let laserDirection = new Vector3(0, 0, 1);
 
             function animate() {
                 const now = performance.now();
                 const dt = Math.max(0.001, (now - lastTick) / 1000);
                 lastTick = now;
 
-                // Straight-line approach motion (only when simulation is active)
-                if (simulationActive && !hasImpacted) {
-                    approachProgress = Math.min(approachLen, approachProgress + approachSpeedRps * dt); // use slider-driven speed
-                    const cur = approachStart.clone().add(approachDir.clone().multiplyScalar(approachProgress));
-                    const llh = vecToLngLatAlt(cur);
-                    asteroid.lat = llh.lat;
-                    asteroid.lng = llh.lng;
-                    asteroid.altitude = llh.alt;
+                // Update satellite orbit always
+                satelliteAngle += dt * 0.2;
+                satellite.lat = 0; // equatorial orbit
+                satellite.lng = (satelliteAngle * 180 / Math.PI) % 360; // convert angle to longitude
+                if (satellite.lng > 180) satellite.lng -= 360;
+                world.objectsData(objects);
 
-                    // Tail orientation + flicker
+                // Update active rockets
+                if (activeRockets.length) {
+                    const asteroidObj = objects.find(obj => obj.type === 'asteroid');
+                    const asteroidPos = asteroidObj ? lngLatToVec(asteroidObj.lng, asteroidObj.lat).multiplyScalar(asteroidObj.altitude + 1) : null;
+                    for (let i = activeRockets.length - 1; i >= 0; i--) {
+                        const r = activeRockets[i];
+                        if (!r.mesh) { activeRockets.splice(i, 1); continue; }
+                        if (asteroidPos) {
+                            const desired = asteroidPos.clone().sub(r.pos).normalize();
+                            r.vel.lerp(desired.multiplyScalar(ROCKET_SPEED), Math.min(1, dt * 1.3));
+                            const q = new Quaternion().setFromUnitVectors(new Vector3(0, 1, 0), r.vel.clone().normalize());
+                            r.mesh.setRotationFromQuaternion(q);
+                        }
+                        r.pos.addScaledVector(r.vel, dt);
+                        r.mesh.position.copy(r.pos);
+
+                        // Hit detection
+                        if (asteroidPos && r.pos.distanceTo(asteroidPos) < ROCKET_HIT_RADIUS) {
+                            const hitPower = 70;
+                            const fully = updateDeflectionProgress(hitPower);
+                            const currentVelocity = approachDir.clone().multiplyScalar(approachSpeedRps);
+                            const impulse = r.vel.clone().normalize().multiplyScalar(0.02);
+                            const newVelocity = currentVelocity.add(impulse);
+                            const newSpeed = newVelocity.length();
+                            if (newSpeed > 0) {
+                                approachDir = newVelocity.clone().normalize();
+                                approachSpeedRps = newSpeed;
+                            }
+                            const asteroidObj2 = objects.find(obj => obj.type === 'asteroid');
+                            if (asteroidObj2) asteroidObj2.deflected = true;
+                            if (fully) {
+                                if (asteroidObj2) asteroidObj2.deflectedFully = true;
+                                try {
+                                    const outward = asteroidPos.clone().normalize();
+                                    approachDir = outward;
+                                    approachSpeedRps = Math.max(approachSpeedRps, 1.2);
+                                } catch (_) {}
+                                showNotification('✅ Rocket intercept', 'Deflection complete. Asteroid pushed away.', 'success', 2600);
+                            } else {
+                                showNotification('💥 Rocket hit', `Deflection: ${Math.round(deflectionProgress)}%`, 'success', 1800);
+                            }
+                            if (r.mesh && r.mesh.parent) world.scene().remove(r.mesh);
+                            activeRockets.splice(i, 1);
+                            continue;
+                        }
+
+                        // Lifetime cleanup
+                        if ((now / 1000) - r.born > ROCKET_LIFE) {
+                            if (r.mesh && r.mesh.parent) world.scene().remove(r.mesh);
+                            activeRockets.splice(i, 1);
+                        }
+                    }
+                }
+
+                // Straight-line approach motion
+                if (!hasImpacted) {
+                    // Check if asteroid has been deflected - use new trajectory calculation
+                    const asteroidObj = objects.find(obj => obj.type === 'asteroid');
+                    if (asteroidObj && asteroidObj.deflected) {
+                        // Use realistic physics trajectory - asteroid continues in deflected direction
+                        const currentPos = lngLatToVec(asteroid.lng, asteroid.lat).multiplyScalar(asteroid.altitude + 1);
+                        const newPos = currentPos.add(approachDir.clone().multiplyScalar(approachSpeedRps * dt));
+                        
+                        const llh = vecToLngLatAlt(newPos);
+                        asteroid.lat = llh.lat;
+                        asteroid.lng = llh.lng;
+                        asteroid.altitude = llh.alt;
+                        
+                        // Check if asteroid is now moving away from Earth and has passed minimum distance
+                        const distanceFromEarth = newPos.length();
+                        const earthCenter = new Vector3(0, 0, 0);
+                        const toEarth = earthCenter.clone().sub(newPos).normalize();
+                        const velocityDotToEarth = approachDir.dot(toEarth);
+                        
+                        // More stringent success conditions: asteroid must be far away AND moving away
+                        // AND have passed the closest approach point to Earth
+                        const minSuccessDistance = 3.0; // Asteroid must be at least 3 Earth radii away
+                        const isMovingAway = velocityDotToEarth < -0.2; // Strong outward velocity
+                        const hasClearedEarth = distanceFromEarth > minSuccessDistance;
+                        
+                        // Additional check: asteroid's closest approach to Earth should be > 1.5 radii
+                        // Calculate closest approach by projecting current position onto velocity vector
+                        const timeToClosestApproach = -newPos.dot(approachDir) / approachDir.lengthSq();
+                        let closestDistance = distanceFromEarth;
+                        
+                        if (timeToClosestApproach > 0) {
+                            // Future closest approach
+                            const futurePos = newPos.clone().add(approachDir.clone().multiplyScalar(timeToClosestApproach));
+                            closestDistance = futurePos.length();
+                        }
+                        
+                        const safeClosestApproach = closestDistance > 1.3; // Safe miss distance
+                        
+                        if (isMovingAway && hasClearedEarth && safeClosestApproach) {
+                            console.log('Asteroid successfully deflected and moving away from Earth - resetting simulation');
+                            showNotification(
+                                '🎉 Mission Successful!', 
+                                'Asteroid successfully deflected away from Earth! You have saved our planet. The simulation will reset in a moment.',
+                                'success',
+                                6000
+                            );
+                            setTimeout(() => resetSimulation(), 3000); // Reset after 3 seconds for better feedback
+                        }
+                        
+                        // Check for impact with Earth surface
+                        if (distanceFromEarth <= 1.02) { // Close to Earth surface
+                            hasImpacted = true;
+                        }
+                    } else {
+                        // Original straight-line approach (not deflected yet)
+                        approachProgress = Math.min(approachLen, approachProgress + approachSpeedRps * dt);
+                        const cur = approachStart.clone().add(approachDir.clone().multiplyScalar(approachProgress));
+                        const llh = vecToLngLatAlt(cur);
+                        asteroid.lat = llh.lat;
+                        asteroid.lng = llh.lng;
+                        asteroid.altitude = llh.alt;
+                        
+                        // Check for impact when reaching end of straight line approach
+                        if (approachProgress >= approachLen) {
+                            hasImpacted = true;
+                        }
+                    }
+
+                    // Tail orientation + flicker (same for both trajectories)
                     const camera = world.controls().object;
                     const camLocal = asteroidGroup.worldToLocal(camera.position.clone());
                     tailPivot.lookAt(camLocal);
@@ -1537,99 +1540,34 @@
 
                     world.objectsData(objects);
 
-                    // Impact when we reach end of the line (no speed-up for shallow angle; just takes longer)
-                    if (approachProgress >= approachLen) {
-                        hasImpacted = true;
+                    // Update trajectory visualization
+                    updateTrajectoryVisualization();
 
+                    // Impact processing - only trigger explosion when asteroid hits Earth
+                    if (hasImpacted) {
+                        showNotification(
+                            '💥 Defense Failed!', 
+                            'The asteroid has impacted Earth! The defense system was unable to deflect the incoming threat. Better luck next time!',
+                            'error',
+                            6000
+                        );
+                        
                         applyImpactFromUI();
                         objects.length = 0;
-
+                        objects.push(satellite); // keep satellite
                         blast = computeBlast();
                         explosionDuration = blast.durationMs;
 
-                        // Shockwave ring config
                         const shock = {
                             lng: IMPACT.lng, lat: IMPACT.lat,
-                            maxR: blast.shockMaxR * 0.5,
+                            maxR: blast.shockMaxR,
                             propagationSpeed: blast.shockSpeed,
                             repeatPeriod: 1e9
                         };
-                        const shockLifeMs = (shock.maxR / shock.propagationSpeed) * 1000 + blast.shockLifePadMs;
+                        world.ringsData([shock]);
+                        const lifeMs = (shock.maxR / shock.propagationSpeed) * 1000 + blast.shockLifePadMs;
+                        setTimeout(() => world.ringsData([]), lifeMs);
 
-                        // Build rings array
-                        const rings = [shock];
-
-                        // Tsunami: only if ocean impact
-                        const onLand = isPointOnLand(IMPACT.lng, IMPACT.lat);
-                        const oceanHit = landPolys.length > 0 && !onLand;
-
-                        if (oceanHit) {
-                            const bf = blast?.blastFactor ?? 1;
-
-                            // Range and speed constraints
-                            const baseMaxR = Math.min(180, Math.max(40, 70 * bf + 20));
-                            const tsuMaxR = Math.max(30, baseMaxR * 0.8); // 80% range
-                            const baseSpeed = Math.min(40, Math.max(10, 12 + 8 * bf));
-                            const tsuSpeed = Math.max(4, baseSpeed * 0.5); // 50% speed
-
-                            // Fixed tsunami visual duration: ~2s
-                            const tsuDurationMs = 2000;
-                            const ripples = 12;
-                            const repeatPeriod = Math.max(120, tsuDurationMs / ripples);
-
-                            // Dark blue color + stronger distance fade
-                            const blueA = (t) => `rgba(10,40,140,${0.95 * Math.pow(1 - t, 2.0)})`;
-                            const blueB = (t) => `rgba(10,40,140,${0.60 * Math.pow(1 - t, 2.0)})`;
-
-                            // Primary and secondary ripples
-                            const tsu = {
-                                lng: IMPACT.lng, lat: IMPACT.lat,
-                                maxR: tsuMaxR,
-                                propagationSpeed: tsuSpeed,
-                                repeatPeriod,
-                                colorFn: blueA
-                            };
-                            const tsu2 = {
-                                lng: IMPACT.lng, lat: IMPACT.lat,
-                                maxR: tsuMaxR,
-                                propagationSpeed: tsuSpeed * 0.92,
-                                repeatPeriod,
-                                colorFn: blueB
-                            };
-                            rings.push(tsu, tsu2);
-
-                            // If/when the wave reaches the nearest coast, keep it only briefly
-                            const coastDeg = minCoastDistanceDeg(IMPACT.lng, IMPACT.lat, 6);
-
-                            const coastMs = Number.isFinite(coastDeg) ? (coastDeg / tsuSpeed) * 1000 : Infinity;
-                            var tsuLifeMs = Math.min(tsuDurationMs, coastMs + 300) + blast.shockLifePadMs;
-
-                            // Apply rings
-                            world.ringsData(rings);
-
-                            // CHANGE: stop tsunami rings in-place (no ringsData reset -> no second shock)
-                            setTimeout(() => {
-                                // Prevent new pulses
-                                tsu.repeatPeriod = 1e12;
-                                tsu2.repeatPeriod = 1e12;
-                                // Kill current pulses quickly and hide
-                                tsu.propagationSpeed = 1e6; tsu2.propagationSpeed = 1e6;
-                                tsu.maxR = 0.0001; tsu2.maxR = 0.0001;
-                                tsu.colorFn = () => 'rgba(0,0,0,0)';
-                                tsu2.colorFn = () => 'rgba(0,0,0,0)';
-                            }, Math.round(tsuLifeMs));
-
-                            // Keep shock until its natural life
-                            setTimeout(() => {
-                                world.ringsData([]);
-                            }, Math.round(shockLifeMs));
-                        } else {
-                            // No tsunami: just shock with its own lifetime
-                            world.ringsData(rings);
-                            setTimeout(() => world.ringsData([]), Math.round(shockLifeMs));
-                        }
-
-                        // Spawn explosion object
                         explosionGroup = createExplosion();
                         const explosionObj = { type: 'explosion', lat: IMPACT.lat, lng: IMPACT.lng, altitude: 0 };
                         objects.push(explosionObj);
@@ -1639,8 +1577,8 @@
                         if (!craterPlaced) {
                             world.polygonsData([]);
                             const bf = blast.blastFactor;
-                            const inner = Math.min(10, Math.max(0.6, 1.0 + 2.0 * bf)) * 0.65;
-                            const outer = Math.min(18, Math.max(inner + 0.8, inner + 3.2 * bf)) * 0.65;
+                            const inner = Math.min(10, Math.max(0.6, 1.0 + 2.0 * bf));
+                            const outer = Math.min(18, Math.max(inner + 0.8, inner + 3.2 * bf));
                             const craterFeatures = buildCrater(IMPACT, inner, outer);
                             const altMul = Math.min(2.2, 0.9 + 0.4 * bf);
                             for (const f of craterFeatures) {
@@ -1729,13 +1667,15 @@
 
                     // Cleanup at end
                     if (t >= 1) {
-                        objects.length = 0;
+                        // Remove only explosion, keep satellite
+                        objects = objects.filter(obj => obj.type !== 'explosion');
                         world.objectsData(objects);
                         explosionGroup = null;
-                        // NEW: stop simulation after finishing
-                        simulationActive = false;
                     }
                 }
+
+                // Remove old laser logic - replaced by fireLaser() function
+                // Old laser logic was here but now handled by button click
 
                 requestAnimationFrame(animate);
             }
@@ -1763,7 +1703,15 @@
             velOut: document.getElementById('ui-velOut'),
             lat: document.getElementById('ui-lat'),
             lng: document.getElementById('ui-lng'),
-            simulate: document.getElementById('simulateBtn')
+            simulate: document.getElementById('simulateBtn'),
+            laserPower: document.getElementById('laser-power'),
+            laserRadius: document.getElementById('laser-radius'),
+            laserRadiusOut: document.getElementById('laser-radius-out'),
+            fireLaser: document.getElementById('fire-laser'),
+            // Deflection progress elements
+            deflectionFill: document.getElementById('deflection-fill'),
+            deflectionPercent: document.getElementById('deflection-percent'),
+            deflectionStatus: document.getElementById('deflection-status')
         };
         const getDiameterMeters = () => {
             const d = Number(els.diameter.value || ui.diameter);
@@ -1774,7 +1722,6 @@
         function computeBlast() {
             const d_m = getDiameterMeters();
             const rho = Number(els.density.value || ui.density);
-
             const v_kms = Number(els.vel.value || ui.velocityKms);
             const v = v_kms * 1000;
             const theta = (Number(els.angle.value || ui.angleDeg)) * Math.PI / 180;
@@ -1817,11 +1764,17 @@
             const updateLabels = () => {
                 els.angleOut.textContent = `${Number(els.angle.value).toFixed(0)}°`;
                 els.velOut.textContent = `${Number(els.vel.value).toFixed(0)} km/s`;
+                els.laserRadiusOut.textContent = `${Number(els.laserRadius.value).toFixed(2)}`;
             };
             ['input', 'change'].forEach(evt => {
                 els.angle.addEventListener(evt, updateLabels);
                 els.vel.addEventListener(evt, updateLabels);
+                els.laserRadius.addEventListener(evt, updateLabels);
             });
+            
+            // Update laser radius event listener moved inside Promise.all() scope
+            // where laserRadius and laserMesh are defined
+            
             els.diameter.addEventListener('change', () => ui.diameter = Number(els.diameter.value || ui.diameter));
             els.unit.addEventListener('change', () => ui.unit = els.unit.value);
             els.density.addEventListener('change', () => ui.density = Number(els.density.value || ui.density));
@@ -1830,6 +1783,9 @@
             els.lat.addEventListener('change', () => ui.lat = Number(els.lat.value));
             els.lng.addEventListener('change', () => ui.lng = Number(els.lng.value));
             updateLabels();
+
+            // Fire Laser event listener moved inside Promise.all() scope
+            // where fireLaser() function is defined
 
             // Slider filled-track painting with dual-accent gradient fill (not clipped)
             const setRangeFill = el => {
@@ -1847,6 +1803,8 @@
             // ...existing initRange calls...
             initRange(els.angle);
             initRange(els.vel);
+            initRange(els.laserPower);
+            initRange(els.laserRadius);
         }
         wireUI();
         let blast = computeBlast();
@@ -1913,6 +1871,21 @@
         }
         initTooltips();
 
+        // Guide: open popup modal when clicking the bottom-right header
+        (function initGuide(){
+            const guide = document.getElementById('guide-toggle');
+            const header = guide?.querySelector('.guide-header');
+            const modal = document.getElementById('guide-modal');
+            const backdrop = modal?.querySelector('.guide-backdrop');
+            const closeBtn = document.getElementById('guide-close');
+            const openModal = () => modal?.classList.add('show');
+            const closeModal = () => modal?.classList.remove('show');
+            if (header) header.addEventListener('click', openModal);
+            if (backdrop) backdrop.addEventListener('click', closeModal);
+            if (closeBtn) closeBtn.addEventListener('click', closeModal);
+            window.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeModal(); });
+        })();
+
         // Geodesic helpers for approach path
         function destinationPoint(lngDeg, latDeg, bearingDeg, distanceDeg) {
             const toRad = Math.PI / 180, toDeg = 180 / Math.PI;
@@ -1924,7 +1897,7 @@
             const sinδ = Math.sin(δ), cosδ = Math.cos(δ);
             const sinφ2 = sinφ1 * cosδ + cosφ1 * sinδ * Math.cos(θ);
             const φ2 = Math.asin(sinφ2);
-            const y = Math.sin(theta) * sinδ * cosφ1;
+            const y = Math.sin(θ) * sinδ * cosφ1;
             const x = cosδ - sinφ1 * sinφ2;
             const λ2 = λ1 + Math.atan2(y, x);
 
