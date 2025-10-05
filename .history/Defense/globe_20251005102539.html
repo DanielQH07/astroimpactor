@@ -642,32 +642,17 @@
 
             // Laser system
             let laserRadius = 0.15; // Increased from 0.05 to 0.15 for better visibility
-            const laserGeom = new CylinderGeometry(laserRadius, laserRadius, 1, 16);
+            const laserGeom = new CylinderGeometry(laserRadius, laserRadius, 1, 8);
             const laserMat = new MeshStandardMaterial({ 
                 color: 0xff0000, 
                 transparent: true, 
                 opacity: 0.9,
                 emissive: 0xff0000,
-                emissiveIntensity: 0.7,
-                depthWrite: false
+                emissiveIntensity: 0.7
             });
             const laserMesh = new Mesh(laserGeom, laserMat);
             laserMesh.visible = false;
             world.scene().add(laserMesh);
-
-            const laserGlowMat = new MeshBasicMaterial({
-                color: 0x00ffff,
-                transparent: true,
-                opacity: 0.35,
-                blending: AdditiveBlending,
-                depthWrite: false
-            });
-            const laserGlowGeom = new CylinderGeometry(laserRadius * 2.5, laserRadius * 2.5, 1, 16);
-            const laserGlowMesh = new Mesh(laserGlowGeom, laserGlowMat);
-            laserGlowMesh.visible = false;
-            world.scene().add(laserGlowMesh);
-
-            let laserTimeoutId = null;
 
             // Mouse interaction variables
             let isMouseDown = false;
@@ -1087,6 +1072,68 @@
                 }
             }
 
+            function findNearestAsteroid() {
+                if (!objects.find(obj => obj.type === 'asteroid')) {
+                    return null;
+                }
+                
+                const asteroid = objects.find(obj => obj.type === 'asteroid');
+                const satPos = lngLatToVec(satellite.lng, satellite.lat).multiplyScalar(satellite.altitude + 1);
+                const astPos = lngLatToVec(asteroid.lng, asteroid.lat).multiplyScalar(asteroid.altitude + 1);
+                
+                return { position: astPos, object: asteroid };
+            }
+
+            function fireLaser() {
+                if (!isLaserActive) return;
+                
+                const satPos = lngLatToVec(satellite.lng, satellite.lat).multiplyScalar(satellite.altitude + 1);
+                let targetPos;
+                
+                const nearestAsteroid = findNearestAsteroid();
+                if (nearestAsteroid) {
+                    // Target asteroid
+                    targetPos = nearestAsteroid.position;
+                } else {
+                    // Fire into space (away from Earth)
+                    const direction = satPos.clone().normalize();
+                    targetPos = satPos.clone().add(direction.multiplyScalar(10));
+                }
+                
+                // Update laser geometry
+                const distance = satPos.distanceTo(targetPos);
+                const midPoint = satPos.clone().add(targetPos).multiplyScalar(0.5);
+                const laserGlow = new Mesh(glowGeometry, glowMaterial);
+                laserGlow.position.copy(midPoint);
+                laserGlow.setRotationFromQuaternion(quaternion);
+                world.scene().add(laserGlow);
+                
+                laserMesh.scale.set(laserRadius, distance, laserRadius);
+                laserMesh.position.copy(midPoint);
+                laserMesh.lookAt(targetPos);
+                laserMesh.visible = true;
+                laserGlow.visible = true;
+
+                // Thêm vào timeout để ẩn cả hai
+                setTimeout(() => {
+                    laserMesh.visible = false;
+                    if (laserGlow) {
+                        world.scene().remove(laserGlow);
+                        laserGlow.geometry.dispose();
+                        laserGlow.material.dispose();
+                    }
+                    console.log('Laser and glow hidden after 3 seconds');
+                }, 3000); // Tăng thời gian hiển thị lên 3 giây
+                
+                // Apply force to asteroid if hit
+                if (nearestAsteroid && !hasImpacted) {
+                    const force = laserPower * 0.001;
+                    const laserDir = targetPos.clone().sub(satPos).normalize();
+                    approachDir.add(laserDir.multiplyScalar(force));
+                    approachDir.normalize();
+                }
+            }
+
             // Add event listeners
             window.addEventListener('mousemove', onMouseMove);
             window.addEventListener('mousedown', onMouseDown);
@@ -1131,106 +1178,166 @@
 
             function fireLaser() {
                 console.log('fireLaser() called');
-
                 const satPos = lngLatToVec(satellite.lng, satellite.lat).multiplyScalar(satellite.altitude + 1);
-                const nearestAsteroid = findNearestAsteroid();
                 let targetPos;
-
+                
+                const nearestAsteroid = findNearestAsteroid();
                 if (nearestAsteroid) {
-                    targetPos = nearestAsteroid.position.clone();
-
+                    targetPos = nearestAsteroid.position;
+                    
+                    // Check line of sight before firing
                     if (!hasLineOfSight(satPos, targetPos)) {
                         console.log('Cannot fire laser: Earth is blocking the path to asteroid');
                         showNotification(
-                            '🌍 Laser Blocked!',
-                            'Cannot fire laser - Earth is blocking the path to the asteroid. Move the satellite or wait for a better alignment.',
+                            '🌍 Laser Blocked!', 
+                            'Cannot fire laser - Earth is blocking the path to the asteroid. Move satellite to a better position or wait for orbital alignment.',
                             'warning',
                             4000
                         );
-                        return;
+                        return; // Don't fire if Earth blocks the path
                     }
-
+                    
                     console.log('Laser targeting asteroid at:', nearestAsteroid.object.lat, nearestAsteroid.object.lng);
                 } else {
+                    // Fire into space (away from Earth)
                     const direction = satPos.clone().normalize();
                     targetPos = satPos.clone().add(direction.multiplyScalar(10));
                     console.log('No asteroid found, firing into space');
                 }
-
-                const laserVector = targetPos.clone().sub(satPos);
-                const distance = laserVector.length();
-                if (distance <= 1e-3) {
-                    console.warn('Laser target too close to satellite; skipping render.');
-                    return;
+                
+                // Calculate laser beam properties
+                const laserDirection = targetPos.clone().sub(satPos).normalize();
+                const distance = satPos.distanceTo(targetPos);
+                console.log('Laser distance:', distance, 'Direction:', laserDirection);
+                if (!laserMesh.geometry) {
+                    laserMesh.geometry = new CylinderGeometry(0.1, 0.1, 1, 8);
                 }
-
-                const laserDirection = laserVector.clone().normalize();
-                const midPoint = satPos.clone().add(targetPos).multiplyScalar(0.5);
-
-                const sliderRadius = Number(els.laserRadius.value || laserRadius);
-                laserRadius = Number.isFinite(sliderRadius) ? sliderRadius : laserRadius;
-                const currentLaserRadius = Math.max(0.1, laserRadius * 5);
-
-                if (laserMesh.geometry) {
-                    laserMesh.geometry.dispose();
-                }
-                laserMesh.geometry = new CylinderGeometry(currentLaserRadius, currentLaserRadius, distance, 32);
-
-                if (laserMesh.material && typeof laserMesh.material.dispose === 'function') {
-                    laserMesh.material.dispose();
-                }
-                const laserMaterial = new MeshStandardMaterial({
+                // Update laser radius from UI
+                const currentLaserRadius = Number(els.laserRadius.value);
+                laserMesh.geometry.dispose();
+                laserMesh.geometry = new CylinderGeometry(currentLaserRadius, currentLaserRadius, distance, 8);
+                
+                // Position laser: start at satellite position, extend toward target
+                const laserStart = satPos.clone();
+                const laserEnd = targetPos.clone();
+                const midPoint = laserStart.clone().add(laserEnd).multiplyScalar(0.5);
+                
+                laserMesh.position.copy(midPoint);
+                
+                // Rotate laser to point from satellite to asteroid
+                // CylinderGeometry has its axis along Y, so we need to align Y-axis with laser direction
+                const up = new Vector3(0, 1, 0);
+                const quaternion = new Quaternion().setFromUnitVectors(up, laserDirection);
+                laserMesh.setRotationFromQuaternion(quaternion);
+                
+                // Make laser bright red and visible - ensure material exists
+                laserMesh.material = new MeshBasicMaterial({ 
                     color: 0x00ffff,
-                    transparent: true,
-                    opacity: 1,
+                    transparent: true, 
+                    opacity: 1.0,
                     emissive: 0x00ffff,
-                    emissiveIntensity: 3,
+                    emissiveIntensity: 3.0,
                     depthWrite: false
                 });
-                laserMesh.material = laserMaterial;
-
-                const orientation = new Quaternion().setFromUnitVectors(new Vector3(0, 1, 0), laserDirection);
-                laserMesh.position.copy(midPoint);
-                laserMesh.setRotationFromQuaternion(orientation);
                 laserMesh.visible = true;
-
-                if (laserGlowMesh.geometry) {
-                    laserGlowMesh.geometry.dispose();
-                }
-                laserGlowMesh.geometry = new CylinderGeometry(currentLaserRadius * 2.5, currentLaserRadius * 2.5, distance, 32);
-                laserGlowMesh.position.copy(midPoint);
-                laserGlowMesh.setRotationFromQuaternion(orientation);
-                laserGlowMesh.visible = true;
-                laserGlowMesh.material.opacity = 0.35;
-                laserGlowMesh.material.color.setHex(0x00ffff);
-
-                if (laserTimeoutId) {
-                    clearTimeout(laserTimeoutId);
-                }
-                laserTimeoutId = setTimeout(() => {
-                    laserMesh.visible = false;
-                    laserGlowMesh.visible = false;
-                }, 3000);
-
+                console.log('Laser visible:', laserMesh.visible, 'Position:', laserMesh.position);
+                
+                // Apply force to asteroid if hit and not impacted yet
                 if (nearestAsteroid && !hasImpacted) {
                     const laserPowerValue = Number(els.laserPower.value);
+                    
+                    // Update deflection progress
                     const fullyDeflected = updateDeflectionProgress(laserPowerValue);
-
-                    const baseForce = laserPowerValue * 0.0005;
-                    const currentVelocity = approachDir.clone().multiplyScalar(approachSpeedRps);
-                    const deflectionForce = laserDirection.clone().multiplyScalar(baseForce);
-                    const newVelocity = currentVelocity.add(deflectionForce);
-
-                    const newSpeed = newVelocity.length();
-                    if (newSpeed > 0) {
-                        approachDir = newVelocity.clone().normalize();
-                        approachSpeedRps = newSpeed;
+                    
+                    const baseForce = laserPowerValue * 0.0005; // Increased force for better deflection
+                    
+                    // Calculate deflection direction: perpendicular to current velocity for realistic deflection
+                    const asteroidPos = lngLatToVec(nearestAsteroid.object.lng, nearestAsteroid.object.lat)
+                        .multiplyScalar(nearestAsteroid.object.altitude + 1);
+                    const laserDir = laserDirection.clone().normalize();                    /* Thêm vào style.css */
+                    function playLaserSound() {
+                        // Tạo sound bằng Web Audio API
+                        const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                        const oscillator = audioContext.createOscillator();
+                        const gainNode = audioContext.createGain();
+                        
+                        oscillator.connect(gainNode);
+                        gainNode.connect(audioContext.destination);
+                        
+                        oscillator.frequency.setValueAtTime(800, audioContext.currentTime);
+                        oscillator.frequency.exponentialRampToValueAtTime(400, audioContext.currentTime + 0.5);
+                        
+                        gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+                        gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.5);
+                        
+                        oscillator.start(audioContext.currentTime);
+                        oscillator.stop(audioContext.currentTime + 0.5);
                     }
-
+                    
+                    // Gọi trong fireLaser():
+                    playLaserSound();                    // Trong hàm fireLaser(), sau phần thiết lập laserMesh:
+                    
+                    // Cập nhật glow effect
+                    laserGlowMesh.geometry.dispose();
+                    laserGlowMesh.geometry = new CylinderGeometry(currentLaserRadius * 3, currentLaserRadius * 3, distance, 8);
+                    laserGlowMesh.position.copy(midPoint);
+                    laserGlowMesh.setRotationFromQuaternion(quaternion);
+                    laserGlowMesh.visible = true;
+                    
+                    // Hide cả laser và glow
+                    setTimeout(() => {
+                        laserMesh.visible = false;
+                        laserGlowMesh.visible = false;
+                        console.log('Laser and glow hidden after 5 seconds');
+                    }, 5000);                    // Thêm vào sau phần tạo laserMesh (trong Promise.then()):
+                    
+                    // Tạo laser glow effect
+                    const laserGlowGeom = new CylinderGeometry(laserRadius * 3, laserRadius * 3, 1, 8);
+                    const laserGlowMat = new MeshBasicMaterial({
+                        color: 0x00ffff,
+                        transparent: true,
+                        opacity: 0.3,
+                        blending: AdditiveBlending,
+                        depthWrite: false
+                    });
+                    const laserGlowMesh = new Mesh(laserGlowGeom, laserGlowMat);
+                    laserGlowMesh.visible = false;
+                    world.scene().add(laserGlowMesh);                    // Tìm hàm fireLaser() và thay thế phần tạo laser beam:
+                    
+                    // Thay đổi màu laser thành xanh neon sáng hơn
+                    laserMesh.material.color.setHex(0x00ffff); // Cyan thay vì đỏ
+                    laserMesh.material.emissive.setHex(0x00ffff);
+                    laserMesh.material.emissiveIntensity = 5; // Tăng intensity
+                    laserMesh.material.opacity = 1.0; // Full opacity
+                    
+                    // Tăng kích thước laser để dễ nhìn thấy
+                    const currentLaserRadius = Math.max(10, Number(els.laserRadius.value)); // Minimum 0.1
+                    laserMesh.geometry.dispose();
+                    laserMesh.geometry = new CylinderGeometry(currentLaserRadius, currentLaserRadius, distance, 8);
+                    
+                    // Tăng thời gian hiển thị laser
+                    setTimeout(() => {
+                        laserMesh.visible = false;
+                        console.log('Laser hidden after 5 seconds');
+                    }, 5000); // Tăng từ 2000ms lên 5000ms
+                    
+                    // Apply deflection force in laser direction (realistic physics)
+                    const currentVelocity = approachDir.clone().multiplyScalar(approachSpeedRps);
+                    const deflectionForce = laserDir.clone().multiplyScalar(baseForce);
+                    
+                    // Add deflection to current velocity - this creates actual trajectory change
+                    const newVelocity = currentVelocity.add(deflectionForce);
+                    
+                    // Update both direction and speed based on new velocity
+                    const newSpeed = newVelocity.length();
+                    approachDir = newVelocity.normalize();
+                    approachSpeedRps = newSpeed;
+                    
+                    // Mark that asteroid has been deflected for trajectory change
                     if (fullyDeflected) {
                         nearestAsteroid.object.deflected = true;
                         showNotification(
-                            '🎉 Asteroid Fully Deflected!',
+                            '🎉 Asteroid Fully Deflected!', 
                             'Asteroid trajectory successfully changed! Mission accomplished!',
                             'success',
                             4000
@@ -1238,20 +1345,27 @@
                     } else {
                         const hitMessage = totalHits === 1 ? 'First hit!' : `Hit ${totalHits}!`;
                         showNotification(
-                            '⚡ Laser Hit!',
+                            '⚡ Laser Hit!', 
                             `${hitMessage} Deflection: ${Math.round(deflectionProgress)}%. Power: ${laserPowerValue}%`,
                             'success',
                             2500
                         );
                     }
+                    
                 } else if (!nearestAsteroid) {
                     showNotification(
-                        '❌ Missed Target',
+                        '❌ Missed Target', 
                         'No asteroid in range. Laser fired into space.',
                         'warning',
                         2000
                     );
                 }
+                
+                // Hide laser after 2 seconds
+                setTimeout(() => {
+                    laserMesh.visible = false;
+                    console.log('Laser hidden after 2 seconds');
+                }, 2000);
             }
 
             // Fire Laser button event listener - moved inside Promise scope
