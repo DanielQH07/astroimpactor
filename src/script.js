@@ -149,7 +149,7 @@ function createAsteroidMesh(elements) {
   const risk = riskById[id];
   const d_m  = risk && Number.isFinite(risk.m) ? Number(risk.m) : null;
   const baseRadiusSU = d_m ? (d_m / M_PER_SU) : THREE.MathUtils.randFloat(1, 2);
-  const radius_su    = Math.max(NEO_MIN_RADIUS_SU, baseRadiusSU);
+  const radius_su    = Math.max(NEO_MIN_RADIUS_SU, baseRadiusSU*0.2);
 
   const geometry = createNoisyRock(radius_su);
   const mesh = new THREE.Mesh(geometry, material);
@@ -204,7 +204,7 @@ function createAsteroidMesh(elements) {
     elements,
     meanAnomaly: M,
     eccentricAnomaly: E,
-    orbitSpeed,
+    orbitSpeed: 0.001 * settings.accelerationOrbit,
     radius_su: radius_su
   };
 
@@ -287,6 +287,7 @@ const settings = {
   filterDangerousOnly: false,
   // Giá trị này sẽ được cập nhật mỗi khung hình cho GUI, sẽ không thay đổi trong quá trình tính toán
   simDateISO: '',
+  orbitLineFraction: 0.001 // phần quỹ đạo được vẽ (0-1)
 };
 function updateAsteroidVisibility() {
   visualAsteroids.forEach(mesh => {
@@ -299,6 +300,24 @@ function updateAsteroidVisibility() {
     if (line) line.visible = visible;
   });
 }
+function updateOrbitLineVisibility() {
+  const totalAsteroids = visualAsteroids.length;
+  const visibleCount = Math.floor(totalAsteroids * settings.orbitLineFraction);
+
+  visualAsteroids.forEach((ast, i) => {
+    const isVisible = i < visibleCount;
+    
+    // Toggle the asteroid mesh itself
+    ast.visible = isVisible;
+
+    // Toggle its orbit line
+    if (ast.userData.orbitLine) {
+      ast.userData.orbitLine.visible = isVisible;
+    }
+  });
+}
+
+
 gui.add(settings, 'accelerationOrbit', 0, 10).onChange(value => {
 });
 gui.add(settings, 'acceleration', 0, 10).onChange(value => {
@@ -311,6 +330,11 @@ gui.add(settings, 'filterDangerousOnly')
   .name('Dangerous only')
   .onChange(updateAsteroidVisibility);
 gui.add(settings, 'simDateISO').name('Sim Date').listen();
+gui.add(settings, 'orbitLineFraction', 0, 1, 0.01)
+   .name('Orbit Lines %')
+   .onChange(updateOrbitLineVisibility);
+
+
 // mouse movement
 const raycaster = new THREE.Raycaster();
 const mouse = new THREE.Vector2();
@@ -415,7 +439,7 @@ window.closeInfo = closeInfo;
 // close info when clicking another planet
 function closeInfoNoZoomOut() {
   var info = document.getElementById('planetInfo');
-  info.style.display = 'none';
+  infoslice.style.display = 'none';
   settings.accelerationOrbit = 1;
 }
 // ******  SUN  ******
@@ -545,7 +569,7 @@ function createPlanet(planetName, size, position, tilt, texture, bump, ring, atm
 }
 
 let data = await readJSON('/data/cur_epoch_kep.json');
-const asteroidElements = data["data"];
+const asteroidElements = data["data"]; // limit to first 2000 for performance
 const firstWithEpoch = asteroidElements.find(e => e['Epoch(MJD)'] != null);
 const epochMJD = firstWithEpoch ? Number(firstWithEpoch['Epoch(MJD)']) : 59600; // fallback
 simMJD = epochMJD;
