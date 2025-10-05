@@ -43,22 +43,45 @@ async function readJSON(url) {
   return json;
 }
 
-// Convert AU to your scene units
+// Convert AU to scene units
 function auToOrbitRadius(au) {
-    return au * 150;
+  return au * 150;
 }
 
 // === Scene/physics scaling helpers ===
 const AU_KM = 149_597_870;                                // km
 const KM_PER_SU = AU_KM / auToOrbitRadius(1);             // 1 scene-unit = ~AU/150 km
-let   TIME_SCALE = 5e5;                                    // 1s mô phỏng = 500,000s thật (tuỳ chỉnh GUI)
+let   TIME_SCALE = 5e5;                                    // 1s stimulate = TIME_SCALE seconds in reallife
+// Kepler mean motion from a (AU)
+const GM_SUN = 1.32712440018e11; // km^3/s^2
+
+function meanMotionRadPerSec(a_AU){
+  const a_km = a_AU * AU_KM;
+  return Math.sqrt(GM_SUN / (a_km * a_km * a_km));
+}
+
 function vrelToOmega(v_kmps, r_su){
   // v [km/s] -> v_scene [su/s] -> omega [rad/s]
   const v_su_per_s = (v_kmps / KM_PER_SU) * TIME_SCALE;
   return v_su_per_s / Math.max(r_su, 1e-6);
 }
+
 const M_PER_SU = KM_PER_SU * 1000;     // mét cho mỗi scene-unit (dựa trên AU->SU hiện có)
-const NEO_MIN_RADIUS_SU = 2;        // bán kính tối thiểu để không “biến mất” trên màn hình
+//const NEO_MIN_RADIUS_SU = 2;        // bán kính tối thiểu để không “biến mất” trên màn hình
+// --- Size estimation helpers (H, G -> diameter) ---
+const PV_DEFAULT = 0.14; // albedo mặc định
+function estimateAlbedoFromSlope(G) {
+  if (!Number.isFinite(G)) return PV_DEFAULT;
+  if (G <= 0.10) return 0.06;   // tối ~ C-type
+  if (G >= 0.30) return 0.25;   // sáng ~ S-type
+  return PV_DEFAULT;            // trung bình
+}
+
+function diameterFromH_m(H, pV = PV_DEFAULT) {
+  if (!Number.isFinite(H) || !Number.isFinite(pV) || pV <= 0) return null;
+  const D_km = 1329 * Math.pow(10, -0.2 * H) / Math.sqrt(pV);
+  return D_km * 1000;
+}
 
 //For day logging
 const DAY_S = 86400;                    // seconds in a day
@@ -85,6 +108,21 @@ function solveKepler(M, e, tolerance = 1e-6) {
     return E;
 }
 
+const baseAsteroidMaterial = new THREE.MeshStandardMaterial({
+  color: 0x888888,
+  metalness: 0.1,
+  roughness: 0.8,
+  // tùy scene: toneMapped=false để giảm lệch màu khi nhiều object
+  toneMapped: false
+});
+
+const baseOrbitLineMaterial = new THREE.LineBasicMaterial({
+  color: 0xffff00,
+  transparent: true,
+  opacity: 0.3,
+  depthWrite: false
+});
+
 // Convert orbital elements to 3D position
 function orbitalElementsToPosition(elements, trueAnomalyRad) {
     const a = elements.a;
@@ -107,15 +145,19 @@ function orbitalElementsToPosition(elements, trueAnomalyRad) {
 }
 
 function createAsteroidOrbitLine(elements, segments = 600) {
-    const points = [];
-    for (let j = 0; j <= segments; j++) {
-        const nu = 2 * Math.PI * j / segments; // true anomaly
-        points.push(orbitalElementsToPosition(elements, nu));
-    }
-    const geometry = new THREE.BufferGeometry().setFromPoints(points);
-    const material = new THREE.LineBasicMaterial({ color: 0xffff00, opacity: 0.3, transparent: true });
-    const orbitLine = new THREE.LineLoop(geometry, material);
-    return orbitLine;
+  const points = [];
+  for (let j = 0; j <= segments; j++) {
+    const nu = 2 * Math.PI * j / segments; // true anomaly
+    points.push(orbitalElementsToPosition(elements, nu));
+  }
+  const geom = new THREE.BufferGeometry().setFromPoints(points);
+  const mat  = baseOrbitLineMaterial.clone(); // đã khởi tạo ở scope ngoài
+  const line = new THREE.LineLoop(geom, mat);
+
+  // orbit line nên ở tâm (không set theo mesh.position)
+  line.renderOrder = 0;
+  line.userData.totalPoints = points.length;
+  return line;
 }
 
 const noise = new Noise(Math.random());
@@ -139,17 +181,34 @@ function createNoisyRock(radius = 1, detail = 3) {
   return geometry;
 }
 
+const VISUAL_SCALE = 1500;
+const NEO_MIN_RADIUS_SU = 1;
 function createAsteroidMesh(elements) {
-  let material = new THREE.MeshStandardMaterial({ color: 0x888888 });
+  const material = baseAsteroidMaterial.clone();
+  material.color.setHex(0x888888);
 
   // ---- ID để match risk ----
   const id = (elements.Name ?? elements["Num/des."] ?? "").toString();
 
   // ---- Lấy size từ risk.m (diameter in meters) ----
+  // const risk = riskById[id];
+  // const d_m  = risk && Number.isFinite(risk.m) ? Number(risk.m) : null;
+  // const radius_su = d_m ? (d_m / M_PER_SU) : THREE.MathUtils.randFloat(0.5, 1);
+  // //const radius_su    = Math.max(NEO_MIN_RADIUS_SU, baseRadiusSU*0.2);
+// ---- Lấy size (ưu tiên risk.m; fallback từ H & G) ----
   const risk = riskById[id];
-  const d_m  = risk && Number.isFinite(risk.m) ? Number(risk.m) : null;
-  const baseRadiusSU = d_m ? (d_m / M_PER_SU) : THREE.MathUtils.randFloat(1, 2);
-  const radius_su    = Math.max(NEO_MIN_RADIUS_SU, baseRadiusSU*0.2);
+  let d_m = (risk && Number.isFinite(Number(risk.m))) ? Number(risk.m) : null;
+
+  if (!d_m) {
+    const H = Number(elements["absolute magnitude"]);
+    const G = Number(elements["slope param"]);
+    const pv = estimateAlbedoFromSlope(G);
+    const d_from_H = diameterFromH_m(H, pv); // mét
+    if (Number.isFinite(d_from_H)) d_m = d_from_H;
+  }
+
+  const baseRadius_su = d_m ? (d_m / M_PER_SU) : THREE.MathUtils.randFloat(0.5, 1);
+  const radius_su = Math.max(NEO_MIN_RADIUS_SU, baseRadius_su * VISUAL_SCALE);
 
   const geometry = createNoisyRock(radius_su);
   const mesh = new THREE.Mesh(geometry, material);
@@ -160,8 +219,12 @@ function createAsteroidMesh(elements) {
   const nu = 2 * Math.atan2(Math.sqrt(1+elements.e)*Math.sin(E/2), Math.sqrt(1-elements.e)*Math.cos(E/2));
   const position = orbitalElementsToPosition(elements, nu);
   mesh.position.copy(position);
+  mesh.renderOrder = 1;
 
-  mesh.name = id || "Unnamed";
+  // TẠO ORBIT LINE Ở ĐÂY (sau khi đã có mesh)
+  const orbitLine = createAsteroidOrbitLine(elements);
+  orbitLine.visible = settings.showOrbitLines; // đồng bộ checkbox
+  mesh.userData.orbitLine = orbitLine;
 
   // ---- Mặc định orbitSpeed cũ ----
   let orbitSpeed = 0.00005 + Math.random() * 0.0001;
@@ -174,7 +237,6 @@ function createAsteroidMesh(elements) {
     orbitSpeed = omega;
 
     const psCum = Number(risk["PS cum"]);
-    mesh.material = mesh.material.clone();
     if (psCum > 0) {
       mesh.material.color.setHex(0xff0000);
       // tránh emissive mặc định để không “lệch ánh sáng” (nếu cần, bật khi hover)
@@ -187,6 +249,7 @@ function createAsteroidMesh(elements) {
     } else {
       mesh.material.color.setHex(0x00a2ff);
     }
+    mesh.material.needsUpdate = true;
 
     mesh.userData.risk = {
       id,
@@ -198,14 +261,18 @@ function createAsteroidMesh(elements) {
     };
   }
 
-  //mesh.userData.diameter_m = d_m;
+  const M0 = THREE.MathUtils.degToRad(elements["mean anomaly"]); // tại Epoch(MJD)
+  const epochMjdAst = Number(elements["Epoch(MJD)"]) || simMJD;  // fallback
+  const n = meanMotionRadPerSec(elements.a);
+
   mesh.userData = {
     ...mesh.userData,
     elements,
-    meanAnomaly: M,
-    eccentricAnomaly: E,
-    orbitSpeed: 0.001 * settings.accelerationOrbit,
-    radius_su: radius_su
+    M0,
+    epochMjd: epochMjdAst,
+    nRadPerSec: n,
+    radius_su: radius_su,
+    sizeSource: d_m ? (risk && Number.isFinite(Number(risk.m)) ? "risk.m" : "H-based") : "random"
   };
 
   scene.add(mesh);
@@ -283,37 +350,53 @@ const settings = {
   accelerationOrbit: 1,
   acceleration: 1,
   sunIntensity: 1.9,
-  timeScale: TIME_SCALE ?? 5e5,  // Nếu TIME_SCALE không tồn tại, mặc định là 5e5
+  timeScale: TIME_SCALE ?? 5e5,
   filterDangerousOnly: false,
-  // Giá trị này sẽ được cập nhật mỗi khung hình cho GUI, sẽ không thay đổi trong quá trình tính toán
   simDateISO: '',
-  orbitLineFraction: 0.001 // phần quỹ đạo được vẽ (0-1)
+  neoFraction: 0.001,        // %NEO: phần trăm số lượng NEO được hiển thị (0-1)
+  showOrbitLines: true       // bật/tắt đường quỹ đạo của NEO
 };
-function updateAsteroidVisibility() {
-  visualAsteroids.forEach(mesh => {
-    const isDanger = !!mesh.userData.isDanger;
-    const visible  = settings.filterDangerousOnly ? isDanger : true;
-    mesh.visible = visible;
+// function updateAsteroidVisibility() {
+//   visualAsteroids.forEach(mesh => {
+//     const isDanger = !!mesh.userData.isDanger;
+//     const visible  = settings.filterDangerousOnly ? isDanger : true;
+//     mesh.visible = visible;
 
-    // also toggle the orbit line tied to this mesh
-    const line = mesh.userData.orbitLine;
-    if (line) line.visible = visible;
-  });
-}
-function updateOrbitLineVisibility() {
-  const totalAsteroids = visualAsteroids.length;
-  const visibleCount = Math.floor(totalAsteroids * settings.orbitLineFraction);
+//     // also toggle the orbit line tied to this mesh
+//     const line = mesh.userData.orbitLine;
+//     if (line) line.visible = visible;
+//   });
+// }
+// function updateOrbitLineVisibility() {
+//   const totalAsteroids = visualAsteroids.length;
+//   const visibleCount = Math.floor(totalAsteroids * settings.orbitLineFraction);
+
+//   visualAsteroids.forEach((ast, i) => {
+//     const isVisible = i < visibleCount;
+    
+//     // Toggle the asteroid mesh itself
+//     ast.visible = isVisible;
+
+//     // Toggle its orbit line
+//     if (ast.userData.orbitLine) {
+//       ast.userData.orbitLine.visible = isVisible;
+//     }
+//   });
+// }
+function applyVisibility() {
+  const total = visualAsteroids.length;
+  const quota = Math.floor(total * THREE.MathUtils.clamp(settings.neoFraction, 0, 1));
 
   visualAsteroids.forEach((ast, i) => {
-    const isVisible = i < visibleCount;
-    
-    // Toggle the asteroid mesh itself
-    ast.visible = isVisible;
+    const passDanger = !settings.filterDangerousOnly || !!ast.userData.isDanger;
+    const passQuota  = i < quota;
 
-    // Toggle its orbit line
-    if (ast.userData.orbitLine) {
-      ast.userData.orbitLine.visible = isVisible;
-    }
+    // Chỉ điều khiển mesh theo các filter
+    ast.visible = passDanger && passQuota;
+
+    // Orbit line: phụ thuộc vào mesh.visible và checkbox "Orbit line"
+    const line = ast.userData.orbitLine;
+    if (line) line.visible = settings.showOrbitLines && ast.visible;
   });
 }
 
@@ -325,14 +408,21 @@ gui.add(settings, 'acceleration', 0, 10).onChange(value => {
 gui.add(settings, 'sunIntensity', 1, 10).onChange(value => {
   sunMat.emissiveIntensity = value;
 });
-gui.add(settings, 'timeScale', 1e4, 2e6).onChange(v => { TIME_SCALE = v; });
+gui.add(settings, 'timeScale', 1e4, 2e6);
+// .onChange(v => { TIME_SCALE = v; });
 gui.add(settings, 'filterDangerousOnly')
   .name('Dangerous only')
-  .onChange(updateAsteroidVisibility);
+  .onChange(applyVisibility);
+
 gui.add(settings, 'simDateISO').name('Sim Date').listen();
-gui.add(settings, 'orbitLineFraction', 0, 1, 0.01)
-   .name('Orbit Lines %')
-   .onChange(updateOrbitLineVisibility);
+
+gui.add(settings, 'neoFraction', 0, 1, 0.01)
+   .name('%NEO')
+   .onChange(applyVisibility);
+
+gui.add(settings, 'showOrbitLines')
+   .name('Orbit line')
+   .onChange(applyVisibility);
 
 
 // mouse movement
@@ -439,7 +529,7 @@ window.closeInfo = closeInfo;
 // close info when clicking another planet
 function closeInfoNoZoomOut() {
   var info = document.getElementById('planetInfo');
-  infoslice.style.display = 'none';
+  info.style.display = 'none';
   settings.accelerationOrbit = 1;
 }
 // ******  SUN  ******
@@ -585,28 +675,64 @@ const riskById = Object.fromEntries(
 );
 
 // Add asteroids and orbits
+// const visualAsteroids = asteroidElements.map(el => {
+//   const id = (el.Name ?? el["Num/des."] ?? "").toString();
+//   const risk = riskById[id];
+//   const isDanger = risk ? isAsteroidDangerous(risk) : false;
+
+//   const orbitLine = createAsteroidOrbitLine(el);
+//   orbitLine.material.color.setHex(isDanger ? 0xff0000 : 0xffff00);
+//   scene.add(orbitLine);
+
+//   const mesh = createAsteroidMesh(el);
+
+//   mesh.userData.isDanger  = isDanger;
+//   mesh.userData.orbitLine = orbitLine;
+
+//   if (isDanger) {
+//     mesh.material = mesh.material.clone();
+//     mesh.material.color.setHex(0xff4444);
+//     mesh.material.emissive = new THREE.Color(0xff0000);
+//     mesh.material.emissiveIntensity = 0.3;
+//   }
+//   return mesh;
+// });
 const visualAsteroids = asteroidElements.map(el => {
   const id = (el.Name ?? el["Num/des."] ?? "").toString();
   const risk = riskById[id];
   const isDanger = risk ? isAsteroidDangerous(risk) : false;
 
-  const orbitLine = createAsteroidOrbitLine(el);
-  orbitLine.material.color.setHex(isDanger ? 0xff0000 : 0xffff00);
-  scene.add(orbitLine);
-
+  // 1) Tạo mesh trước
   const mesh = createAsteroidMesh(el);
+  mesh.userData.isDanger = isDanger;
+  mesh.renderOrder = 1; // vẽ sau line
 
-  mesh.userData.isDanger  = isDanger;
-  mesh.userData.orbitLine = orbitLine;
-
+  // tô màu theo danger (mỗi asteroid 1 material riêng)
   if (isDanger) {
     mesh.material = mesh.material.clone();
     mesh.material.color.setHex(0xff4444);
     mesh.material.emissive = new THREE.Color(0xff0000);
     mesh.material.emissiveIntensity = 0.3;
+    mesh.material.needsUpdate = true;
   }
+
+  // 2) Tạo orbit line sau, màu theo danger, KHÔNG quyết định visible tại đây
+  const orbitLine = createAsteroidOrbitLine(el);          // hàm thuần, không đụng mesh
+  orbitLine.material = baseOrbitLineMaterial.clone();     // không share material
+  orbitLine.material.color.setHex(isDanger ? 0xff0000 : 0xffff00);
+  orbitLine.renderOrder = 0;
+
+  // 3) Gắn vào userData để applyVisibility() quản lý
+  mesh.userData.orbitLine = orbitLine;
+
+  // 4) Thêm cả hai vào scene (trạng thái visible sẽ do applyVisibility() set)
+  scene.add(mesh);
+  scene.add(orbitLine);
+
   return mesh;
 });
+applyVisibility();
+
 // ******  LOADING OBJECTS METHOD  ******
 function loadObject(path, position, scale, callback) {
   const loader = new GLTFLoader();
@@ -1025,24 +1151,30 @@ if (isMovingTowardsPlanet) {
   settings.simDateISO = mjdToDate(simMJD).toISOString().slice(0, 19) + 'Z';
 
   composer.render();
-    visualAsteroids.forEach(ast => {
-    // Increment mean anomaly
-    ast.userData.meanAnomaly += ast.userData.orbitSpeed * settings.accelerationOrbit * delta;
-    const e = ast.userData.elements.e;
+  visualAsteroids.forEach(ast => {
+    const { elements, M0, epochMjd, nRadPerSec } = ast.userData;
+    const e = elements.e;
 
-    // Solve Kepler's equation to get eccentric anomaly
-    const E = solveKepler(ast.userData.meanAnomaly, e);
+    // Thời gian mô phỏng tính từ epoch của phần tử quỹ đạo
+    const dt_s = (simMJD - epochMjd) * DAY_S;
 
-    // Compute true anomaly
-    const nu = 2 * Math.atan2(Math.sqrt(1+e)*Math.sin(E/2), Math.sqrt(1-e)*Math.cos(E/2));
+    // Mean anomaly tại thời điểm mô phỏng
+    const M = M0 + nRadPerSec * dt_s;
 
-    // Update position
-    const pos = orbitalElementsToPosition(ast.userData.elements, nu);
+    // Giải Kepler -> E -> true anomaly
+    const E = solveKepler(M, e);
+    const nu = 2 * Math.atan2(
+      Math.sqrt(1 + e) * Math.sin(E / 2),
+      Math.sqrt(1 - e) * Math.cos(E / 2)
+    );
+
+    // Cập nhật vị trí
+    const pos = orbitalElementsToPosition(elements, nu);
     ast.position.copy(pos);
 
-    // Optional: spin asteroid
+    // Optional: spin
     ast.rotation.y += 0.001;
-});
+  });
 }
 animate();
 
