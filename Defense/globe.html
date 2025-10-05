@@ -99,11 +99,58 @@
             <input id="laser-power" type="range" min="0" max="100" value="50" class="full" />
         </div>
 
-        <button id="fire-laser">Fire Laser</button>
+        
     </div>
 
     <div id="globeViz"></div>
     <div id="time"></div>
+
+    <!-- Bottom-right Guide -->
+    <div id="guide-toggle" class="guide">
+        <div class="guide-header">🛡️ Guide</div>
+        <div class="guide-body">
+            <p>
+                You are defending Earth. Use the satellite <strong>Laser</strong> or ground <strong>Rockets</strong>
+                to deflect the asteroid's trajectory.
+            </p>
+            <p>
+                Each hit increases <strong>Deflection Progress</strong>. At <strong>100%</strong>, the asteroid
+                is pushed away and cannot impact. If below 100%, it will stay inbound and eventually impact.
+            </p>
+            <p>
+                Adjust Angle, Velocity, Size, Density and target location to explore different scenarios.
+            </p>
+        </div>
+    </div>
+
+    <!-- Guide Popup Modal -->
+    <div id="guide-modal" class="guide-modal" aria-hidden="true">
+        <div class="guide-backdrop"></div>
+        <div class="guide-dialog" role="dialog" aria-modal="true" aria-labelledby="guide-title">
+            <div class="guide-title" id="guide-title">🛡️ How to play</div>
+            <div class="guide-content">
+                <p>
+                    You are the commander of Earth's defense. Use the satellite <strong>Laser</strong> or
+                    ground <strong>Rockets</strong> to push the asteroid off-course.
+                </p>
+                <ul>
+                    <li>Each hit fills the <strong>Deflection Progress</strong> bar.</li>
+                    <li>At <strong>100%</strong>, the asteroid is forced to miss Earth.</li>
+                    <li>Below 100%, it will remain inbound and eventually impact.</li>
+                    <li>Tune <em>Angle</em>, <em>Velocity</em>, <em>Size</em>, <em>Density</em>, and impact location.</li>
+                </ul>
+            </div>
+            <div class="guide-actions">
+                <button id="guide-close" class="primary-btn" type="button">Close</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Bottom Center Action Bar -->
+    <div id="action-bar">
+        <button id="fire-laser" class="action-btn">Fire Laser</button>
+        <button id="shoot-rocket" class="action-btn">Shoot</button>
+    </div>
 
     <script type="module">
         import {
@@ -516,8 +563,9 @@
         Promise.all([
             new TextureLoader().loadAsync('//cdn.jsdelivr.net/npm/three-globe/example/img/earth-day.jpg'),
             new TextureLoader().loadAsync('//cdn.jsdelivr.net/npm/three-globe/example/img/earth-night.jpg'),
-            gltfLoader.loadAsync('aurab.glb')
-        ]).then(([dayTexture, nightTexture, satelliteGltf]) => {
+            gltfLoader.loadAsync('aurab.glb'),
+            gltfLoader.loadAsync('rocket.glb')
+        ]).then(([dayTexture, nightTexture, satelliteGltf, rocketGltf]) => {
             console.log('Satellite GLTF loaded:', satelliteGltf);
             const material = new ShaderMaterial({
                 uniforms: {
@@ -640,31 +688,75 @@
             satellite = { type: 'satellite', lat: 0, lng: 0, altitude: 1.1, object: satelliteMesh };
             objects.push(satellite);
 
+            // Rocket system setup
+            const rocketPrefab = rocketGltf?.scene || null;
+            if (rocketPrefab && rocketPrefab.traverse) {
+                rocketPrefab.traverse(n => { if (n.isMesh) { n.castShadow = false; n.receiveShadow = false; } });
+            }
+            const activeRockets = [];
+            const ROCKET_SPEED = 0.9; // world units per second
+            const ROCKET_HIT_RADIUS = 0.25;
+            const ROCKET_LIFE = 20; // seconds
+            const ROCKET_SCALE = 10; // high visibility
+
+            function spawnRocket(startPos, initialDir) {
+                if (!rocketPrefab) {
+                    showNotification('🚀 Rocket unavailable', 'rocket.glb missing or failed to load.', 'warning', 2200);
+                    return null;
+                }
+                const rocket = rocketPrefab.clone(true);
+                rocket.scale.set(ROCKET_SCALE, ROCKET_SCALE, ROCKET_SCALE);
+                const q = new Quaternion().setFromUnitVectors(new Vector3(0, 1, 0), initialDir.clone().normalize());
+                rocket.position.copy(startPos);
+                rocket.setRotationFromQuaternion(q);
+                rocket.renderOrder = 1000;
+                world.scene().add(rocket);
+                const state = { mesh: rocket, pos: startPos.clone(), vel: initialDir.clone().normalize().multiplyScalar(ROCKET_SPEED), born: performance.now() / 1000 };
+                activeRockets.push(state);
+                showNotification('🚀 Rocket launched', 'Rocket is heading to intercept the asteroid.', 'info', 1800);
+                return state;
+            }
+
+            function shootRocket() {
+                const asteroidObj = objects.find(obj => obj.type === 'asteroid');
+                if (!asteroidObj || hasImpacted) {
+                    showNotification('❌ Cannot launch', 'No valid asteroid target at this time.', 'warning', 1800);
+                    return;
+                }
+                // Launch from the predicted impact site toward the asteroid
+                const start = lngLatToVec(IMPACT.lng, IMPACT.lat).multiplyScalar(1.02);
+                const target = lngLatToVec(asteroidObj.lng, asteroidObj.lat).multiplyScalar(asteroidObj.altitude + 1);
+                const dir = target.clone().sub(start).normalize();
+                spawnRocket(start, dir);
+            }
+
             // Laser system
             let laserRadius = 0.15; // Increased from 0.05 to 0.15 for better visibility
             const laserGeom = new CylinderGeometry(laserRadius, laserRadius, 1, 16);
-            const laserMat = new MeshStandardMaterial({ 
-                color: 0xff0000, 
+            const laserMat = new MeshBasicMaterial({ 
+                color: 0x00ffff, 
                 transparent: true, 
-                opacity: 0.9,
-                emissive: 0xff0000,
-                emissiveIntensity: 0.7,
-                depthWrite: false
+                opacity: 1,
+                blending: AdditiveBlending,
+                depthWrite: false,
+                depthTest: false
             });
             const laserMesh = new Mesh(laserGeom, laserMat);
             laserMesh.visible = false;
+            laserMesh.renderOrder = 999;
             world.scene().add(laserMesh);
 
             const laserGlowMat = new MeshBasicMaterial({
                 color: 0x00ffff,
                 transparent: true,
-                opacity: 0.35,
+                opacity: 0.4,
                 blending: AdditiveBlending,
                 depthWrite: false
             });
             const laserGlowGeom = new CylinderGeometry(laserRadius * 2.5, laserRadius * 2.5, 1, 16);
             const laserGlowMesh = new Mesh(laserGlowGeom, laserGlowMat);
             laserGlowMesh.visible = false;
+            laserGlowMesh.renderOrder = 998;
             world.scene().add(laserGlowMesh);
 
             let laserTimeoutId = null;
@@ -1044,10 +1136,8 @@
                     if (d.type === 'laser') return laserMesh;
                     return undefined;
                 })
-                // ADD: HTML elements layer for Tunguska marker
-                .htmlElementsData([TUNGUSKA])
-                .htmlElement(() => makeTunguskaElement())
-                .htmlAltitude(() => 0.01) // slightly above surface
+                // Remove Tunguska marker
+                .htmlElementsData([])
                 // Keep globeRotation uniform in sync when user interacts
                 .onZoom(({ lng, lat }) => material.uniforms.globeRotation.value.set(lng, lat));
 
@@ -1176,18 +1266,15 @@
                 }
                 laserMesh.geometry = new CylinderGeometry(currentLaserRadius, currentLaserRadius, distance, 32);
 
-                if (laserMesh.material && typeof laserMesh.material.dispose === 'function') {
-                    laserMesh.material.dispose();
+                const laserMaterial = laserMesh.material;
+                if (laserMaterial) {
+                    laserMaterial.color.setHex(0x00ffff);
+                    laserMaterial.opacity = 1;
+                    laserMaterial.blending = AdditiveBlending;
+                    laserMaterial.depthWrite = false;
+                    laserMaterial.depthTest = false;
+                    laserMaterial.needsUpdate = true;
                 }
-                const laserMaterial = new MeshStandardMaterial({
-                    color: 0x00ffff,
-                    transparent: true,
-                    opacity: 1,
-                    emissive: 0x00ffff,
-                    emissiveIntensity: 3,
-                    depthWrite: false
-                });
-                laserMesh.material = laserMaterial;
 
                 const orientation = new Quaternion().setFromUnitVectors(new Vector3(0, 1, 0), laserDirection);
                 laserMesh.position.copy(midPoint);
@@ -1201,8 +1288,11 @@
                 laserGlowMesh.position.copy(midPoint);
                 laserGlowMesh.setRotationFromQuaternion(orientation);
                 laserGlowMesh.visible = true;
-                laserGlowMesh.material.opacity = 0.35;
-                laserGlowMesh.material.color.setHex(0x00ffff);
+                if (laserGlowMesh.material) {
+                    laserGlowMesh.material.opacity = 0.4;
+                    laserGlowMesh.material.color.setHex(0x00ffff);
+                    laserGlowMesh.material.needsUpdate = true;
+                }
 
                 if (laserTimeoutId) {
                     clearTimeout(laserTimeoutId);
@@ -1260,13 +1350,22 @@
                 fireLaser();
             });
 
+            // Shoot Rocket button
+            const shootBtn = document.getElementById('shoot-rocket');
+            if (shootBtn) {
+                shootBtn.addEventListener('click', () => {
+                    console.log('Shoot Rocket button clicked');
+                    shootRocket();
+                });
+            }
+
             // Update laser radius when slider changes - moved inside Promise scope
             els.laserRadius.addEventListener('input', () => {
                 laserRadius = Number(els.laserRadius.value);
                 // Update laser material properties for better visibility
                 if (laserMesh && laserMesh.material) {
-                    laserMesh.material.opacity = 0.9;
-                    laserMesh.material.emissiveIntensity = 0.5;
+                    laserMesh.material.opacity = 1;
+                    laserMesh.material.needsUpdate = true;
                 }
                 console.log('Laser radius updated to:', laserRadius);
             });
@@ -1289,6 +1388,60 @@
                 satellite.lng = (satelliteAngle * 180 / Math.PI) % 360; // convert angle to longitude
                 if (satellite.lng > 180) satellite.lng -= 360;
                 world.objectsData(objects);
+
+                // Update active rockets
+                if (activeRockets.length) {
+                    const asteroidObj = objects.find(obj => obj.type === 'asteroid');
+                    const asteroidPos = asteroidObj ? lngLatToVec(asteroidObj.lng, asteroidObj.lat).multiplyScalar(asteroidObj.altitude + 1) : null;
+                    for (let i = activeRockets.length - 1; i >= 0; i--) {
+                        const r = activeRockets[i];
+                        if (!r.mesh) { activeRockets.splice(i, 1); continue; }
+                        if (asteroidPos) {
+                            const desired = asteroidPos.clone().sub(r.pos).normalize();
+                            r.vel.lerp(desired.multiplyScalar(ROCKET_SPEED), Math.min(1, dt * 1.3));
+                            const q = new Quaternion().setFromUnitVectors(new Vector3(0, 1, 0), r.vel.clone().normalize());
+                            r.mesh.setRotationFromQuaternion(q);
+                        }
+                        r.pos.addScaledVector(r.vel, dt);
+                        r.mesh.position.copy(r.pos);
+
+                        // Hit detection
+                        if (asteroidPos && r.pos.distanceTo(asteroidPos) < ROCKET_HIT_RADIUS) {
+                            const hitPower = 70;
+                            const fully = updateDeflectionProgress(hitPower);
+                            const currentVelocity = approachDir.clone().multiplyScalar(approachSpeedRps);
+                            const impulse = r.vel.clone().normalize().multiplyScalar(0.02);
+                            const newVelocity = currentVelocity.add(impulse);
+                            const newSpeed = newVelocity.length();
+                            if (newSpeed > 0) {
+                                approachDir = newVelocity.clone().normalize();
+                                approachSpeedRps = newSpeed;
+                            }
+                            const asteroidObj2 = objects.find(obj => obj.type === 'asteroid');
+                            if (asteroidObj2) asteroidObj2.deflected = true;
+                            if (fully) {
+                                if (asteroidObj2) asteroidObj2.deflectedFully = true;
+                                try {
+                                    const outward = asteroidPos.clone().normalize();
+                                    approachDir = outward;
+                                    approachSpeedRps = Math.max(approachSpeedRps, 1.2);
+                                } catch (_) {}
+                                showNotification('✅ Rocket intercept', 'Deflection complete. Asteroid pushed away.', 'success', 2600);
+                            } else {
+                                showNotification('💥 Rocket hit', `Deflection: ${Math.round(deflectionProgress)}%`, 'success', 1800);
+                            }
+                            if (r.mesh && r.mesh.parent) world.scene().remove(r.mesh);
+                            activeRockets.splice(i, 1);
+                            continue;
+                        }
+
+                        // Lifetime cleanup
+                        if ((now / 1000) - r.born > ROCKET_LIFE) {
+                            if (r.mesh && r.mesh.parent) world.scene().remove(r.mesh);
+                            activeRockets.splice(i, 1);
+                        }
+                    }
+                }
 
                 // Straight-line approach motion
                 if (!hasImpacted) {
@@ -1717,6 +1870,21 @@
             window.addEventListener('scroll', () => { if (tipEl.classList.contains('show') && anchor) placeTooltipAround(anchor); });
         }
         initTooltips();
+
+        // Guide: open popup modal when clicking the bottom-right header
+        (function initGuide(){
+            const guide = document.getElementById('guide-toggle');
+            const header = guide?.querySelector('.guide-header');
+            const modal = document.getElementById('guide-modal');
+            const backdrop = modal?.querySelector('.guide-backdrop');
+            const closeBtn = document.getElementById('guide-close');
+            const openModal = () => modal?.classList.add('show');
+            const closeModal = () => modal?.classList.remove('show');
+            if (header) header.addEventListener('click', openModal);
+            if (backdrop) backdrop.addEventListener('click', closeModal);
+            if (closeBtn) closeBtn.addEventListener('click', closeModal);
+            window.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeModal(); });
+        })();
 
         // Geodesic helpers for approach path
         function destinationPoint(lngDeg, latDeg, bearingDeg, distanceDeg) {

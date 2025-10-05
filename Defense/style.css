@@ -601,6 +601,37 @@ input[type="range"]::-moz-range-track {
     z-index: 1000;
 }
 
+/* Guide popup modal */
+.guide-modal {
+    position: fixed;
+    inset: 0;
+    display: none;
+    z-index: 10001;
+}
+.guide-modal.show { display: block; }
+.guide-backdrop {
+    position: absolute;
+    inset: 0;
+    background: rgba(0,0,0,0.5);
+    backdrop-filter: blur(2px);
+}
+.guide-dialog {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    transform: translate(-50%, -50%);
+    width: min(560px, 92vw);
+    background: linear-gradient(180deg, rgba(25, 33, 54, .96), rgba(18, 24, 41, .96));
+    border: 1px solid rgba(94, 231, 255, 0.35);
+    border-radius: 12px;
+    box-shadow: 0 12px 30px rgba(0,0,0,0.6);
+    color: #e6eefc;
+}
+.guide-title { font-weight: 800; padding: 14px 16px 6px; }
+.guide-content { padding: 0 16px 12px; line-height: 1.5; }
+.guide-content ul { margin: 8px 0 0 20px; }
+.guide-actions { padding: 10px 16px 16px; text-align: right; }
+
 /* Buttons */
 .primary-btn {
     width: 100%;
@@ -616,6 +647,18 @@ input[type="range"]::-moz-range-track {
     font-size: 14px;
     font-weight: bold;
 }
+
+/* Guide bottom-right positioning */
+.guide {
+    position: fixed;
+    right: 14px;
+    bottom: 14px;
+    width: 300px;
+    z-index: 9999;
+}
+.guide-header { cursor: pointer; }
+.guide-body { display: none; }
+.guide.open .guide-body { display: block; }
 
 .primary-btn:hover {
     filter: brightness(1.08);
@@ -693,3 +736,22 @@ input[type="range"]::-moz-range-track {
     transition: all 0.3s ease-in-out;
     backdrop-filter: blur(5px);
 }    
+
+/* Bottom action bar - center aligned and clickable */
+#action-bar {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 12px;
+    z-index: 10000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+}
+
+#action-bar .action-btn {
+    width: auto;
+    margin-top: 0;
+    padding: 8px 14px;
+}
