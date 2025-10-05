@@ -10,6 +10,7 @@ export default defineConfig({
     open: '/src/index.html' // mở mặc định src/index.html khi dev
   },
   build: {
+    target: 'esnext',
     outDir: 'dist',
     emptyOutDir: true,
     sourcemap: true,
