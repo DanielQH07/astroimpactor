@@ -344,7 +344,6 @@ scene.background = cubeTextureLoader.load([
 const gui = new dat.GUI({ autoPlace: false });
 const customContainer = document.getElementById('gui-container');
 customContainer.appendChild(gui.domElement);
-
 // ****** SETTINGS FOR INTERACTIVE CONTROLS  ******
 const settings = {
   accelerationOrbit: 1,
@@ -423,6 +422,68 @@ gui.add(settings, 'neoFraction', 0, 1, 0.01)
 gui.add(settings, 'showOrbitLines')
    .name('Orbit line')
    .onChange(applyVisibility);
+
+// Create tooltip for element
+const guiTooltip = document.createElement('div');
+guiTooltip.className = 'gui-tooltip';
+guiTooltip.style.position = 'fixed';
+guiTooltip.style.background = 'rgba(28,28,28,0.95)';
+guiTooltip.style.color = '#fff';
+guiTooltip.style.padding = '6px 10px';
+guiTooltip.style.borderRadius = '4px';
+guiTooltip.style.fontFamily = "'Roboto', sans-serif";
+guiTooltip.style.fontSize = '13px';
+guiTooltip.style.lineHeight = '1.3';
+guiTooltip.style.pointerEvents = 'none';
+guiTooltip.style.zIndex = '999999';
+guiTooltip.style.opacity = '0';
+guiTooltip.style.transition = 'opacity 0.25s ease, transform 0.25s ease';
+guiTooltip.style.maxWidth = '220px';
+guiTooltip.style.whiteSpace = 'normal';
+guiTooltip.style.overflowWrap = 'break-word';
+guiTooltip.style.textAlign = 'left';
+document.body.appendChild(guiTooltip);
+
+const guiTooltips = {
+  accelerationOrbit: "Controls the orbital speed of planets around the Sun.",
+  acceleration: "Controls the self-rotation speed of each planet.",
+  sunIntensity: "Adjusts the Sun's emitted brightness (emissive intensity).",
+  timeScale: "Controls the simulation time rate of all NEOs(1 real-second = TIME_SCALE simulated seconds).",
+  filterDangerousOnly: "Show only potentially hazardous Near-Earth Objects (NEOs) with Impact Probability >= 0.01 or Palermo scale > -3",
+  neoFraction: "Percentage of NEOs displayed in the simulation.",
+  showOrbitLines: "Toggle the visibility of NEO orbital paths.",
+  simDateISO: "Current simulation date and time (read-only)."
+};
+
+function showTooltip(text, x, y) {
+  guiTooltip.textContent = text;
+  guiTooltip.style.left = x + 15 + 'px';
+  guiTooltip.style.top = y + 15 + 'px';
+  guiTooltip.style.opacity = '1';
+}
+function hideTooltip() {
+  guiTooltip.style.opacity = '0';
+}
+
+// Apply tooltip to selection
+Object.entries(guiTooltips).forEach(([prop, text]) => {
+  const ctrl = gui.__controllers.find(c => c.property === prop);
+  if (!ctrl) return;
+  const target = ctrl.domElement.closest('.cr') || ctrl.domElement;
+  let timer = null;
+
+  target.addEventListener('mouseenter', e => {
+    timer = setTimeout(() => showTooltip(text, e.clientX, e.clientY), 700);
+  });
+  target.addEventListener('mousemove', e => {
+    guiTooltip.style.left = e.clientX + 15 + 'px';
+    guiTooltip.style.top = e.clientY + 15 + 'px';
+  });
+  target.addEventListener('mouseleave', () => {
+    clearTimeout(timer);
+    hideTooltip();
+  });
+});
 
 
 // mouse movement
@@ -1019,7 +1080,7 @@ pluto.planet.receiveShadow = true;
 function isAsteroidDangerous(riskItem) {
   const ipMax = riskItem["IP max"];
   const psMax = riskItem["PS max"];
-  return ipMax >= 0.01 || psMax > -2;
+  return ipMax >= 0.01 || psMax > -3;
 }
 
 const dangerousAsteroids = riskData

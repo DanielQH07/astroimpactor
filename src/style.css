@@ -38,3 +38,47 @@ p {
     color: white; 
     line-height: 1.5; 
 }
+
+.nav-button {
+  position: fixed;
+  bottom: 20px;
+  left: 20px;
+  background: rgba(40, 40, 40, 0.85);
+  border-radius: 12px;
+  padding: 10px 14px;
+  width: 150px; 
+  z-index: 9999; 
+  color: #fff;
+  font-family: "Poppins", sans-serif;
+  box-shadow: 0 4px 10px rgba(0,0,0,0.3);
+  backdrop-filter: blur(4px);
+}
+
+.nav-button p {
+  margin: 0 0 6px 0;
+  font-family: 'Roboto', sans-serif;
+  font-size: 13px;
+  font-weight: bold;
+  text-align: center;
+}
+
+.nav-btn {
+  display: block;
+  background: gray;
+  color: white;
+  box-sizing: border-box;
+  width: 100%;
+  border: 1px solid rgba(255,255,255,0.2);
+  border-radius: 6px;
+  padding: 8px 14px;
+  font-size: 14px;
+  cursor: pointer;
+  margin-bottom: 6px;
+  transition: background 0.3s ease, color 0.3s ease;
+}
+
+.nav-btn:hover {
+  background: white;
+  color: black;
+  box-shadow: 5px 5px 5px black;
+}
