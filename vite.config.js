@@ -3,7 +3,7 @@ import { resolve } from 'path'
 
 export default defineConfig({
   root: '.', // gốc là project
-  publicDir: 'static',
+  publicDir: 'src',
   base: './',
   server: {
     host: true,
@@ -25,6 +25,8 @@ export default defineConfig({
   resolve: {
     alias: {
       '/images': resolve(__dirname, 'src/images'),
+    '/data': resolve(__dirname, 'src/data'), // ✅ map /data → src/data
+
     }
   }
 })

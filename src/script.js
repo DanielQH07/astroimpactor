@@ -750,7 +750,7 @@ function createPlanet(planetName, size, position, tilt, texture, bump, ring, atm
 
 // --- Load asteroid and risk data ---
 // Load current epoch orbital elements
-let data = await readJSON('/data/cur_epoch_kep.json');
+let data = await readJSON('data/cur_epoch_kep.json');
 const asteroidElements = data["data"]; // Full dataset, can limit for performance
 
 // Determine simulation epoch (MJD) from first element with valid epoch
@@ -760,10 +760,10 @@ simMJD = epochMJD;
 settings.simDateISO = mjdToDate(simMJD).toISOString().slice(0, 19) + 'Z';
 
 // Load risk datasets and merge
-data = await readJSON('/data/esa_risk_list_0.json');
+data = await readJSON('data/esa_risk_list_0.json');
 const riskData = data["data"];
 
-data = await readJSON('/data/esa_risk_list_1.json');
+data = await readJSON('data/esa_risk_list_1.json');
 riskData.push(...data["data"]);
 
 // Map risk data by asteroid ID for fast lookup
