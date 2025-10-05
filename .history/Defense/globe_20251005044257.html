@@ -9,18 +9,6 @@
     <!-- Controls Sidebar -->
     <div id="controls">
         <h3>Impact Controls</h3>
-        
-        <!-- Progress Bar for Deflection -->
-        <div class="deflection-progress">
-            <div class="label">Deflection Progress</div>
-            <div class="progress-container">
-                <div class="progress-bar">
-                    <div id="deflection-fill" class="progress-fill"></div>
-                </div>
-                <span id="deflection-percent">0%</span>
-            </div>
-            <div class="deflection-status" id="deflection-status">Ready to fire laser</div>
-        </div>
 
         <div class="label">
             Projectile Diameter
@@ -100,6 +88,7 @@
         </div>
 
         <button id="fire-laser">Fire Laser</button>
+        <button id="toggle-test-lines" style="margin-top: 10px;">Toggle Test Lines</button>
     </div>
 
     <div id="globeViz"></div>
@@ -162,56 +151,6 @@
             return notification;
         }
 
-        // Deflection Progress System
-        let deflectionProgress = 0;
-        const maxDeflectionHits = 20; // Number of hits needed to fully deflect
-        let totalHits = 0;
-
-        function updateDeflectionProgress(hitPower = 0) {
-            if (hitPower > 0) {
-                // Calculate hit strength based on power
-                const hitStrength = hitPower / 100; // 0 to 1
-                deflectionProgress = Math.min(100, deflectionProgress + (hitStrength * 5)); // Each max power hit = 20%
-                totalHits++;
-            }
-
-            // Update UI
-            const progressFill = document.getElementById('deflection-fill');
-            const progressPercent = document.getElementById('deflection-percent');
-            const deflectionStatus = document.getElementById('deflection-status');
-
-            if (progressFill) progressFill.style.width = deflectionProgress + '%';
-            if (progressPercent) progressPercent.textContent = Math.round(deflectionProgress) + '%';
-            
-            // Update status message
-            if (deflectionStatus) {
-                if (deflectionProgress >= 100) {
-                    deflectionStatus.textContent = 'Asteroid successfully deflected!';
-                    deflectionStatus.style.color = '#44ff44';
-                } else if (deflectionProgress >= 80) {
-                    deflectionStatus.textContent = 'Almost there! Keep firing!';
-                    deflectionStatus.style.color = '#ffaa44';
-                } else if (deflectionProgress >= 40) {
-                    deflectionStatus.textContent = 'Good progress! Continue firing!';
-                    deflectionStatus.style.color = '#ff8844';
-                } else if (deflectionProgress > 0) {
-                    deflectionStatus.textContent = `Hit ${totalHits}! Need more power!`;
-                    deflectionStatus.style.color = '#ff4444';
-                } else {
-                    deflectionStatus.textContent = 'Ready to fire laser';
-                    deflectionStatus.style.color = '#9db4d6';
-                }
-            }
-
-            return deflectionProgress >= 100;
-        }
-
-        function resetDeflectionProgress() {
-            deflectionProgress = 0;
-            totalHits = 0;
-            updateDeflectionProgress(0);
-        }
-
             // Impact location and asteroid object
             const IMPACT = { lat: 0, lng: 0 }; // change as desired
             let objects = [];
@@ -222,9 +161,43 @@
             let hasImpacted = false;
             let satellite; // Will be initialized when GLTF loads
             
+            // Approach trajectory variables
+            let approachStart = null;   // THREE.Vector3
+            let approachEnd = null;     // THREE.Vector3
+            let approachDir = null;     // THREE.Vector3 (unit)
+            let approachLen = 0;        // scalar
+            let approachProgress = 0;   // distance traveled along the line
+            
             // Trajectory visualization variables (will be initialized later)
             let trajectoryGeom, trajectoryMat, trajectoryLine;
             let trajectoryGlowGeom, trajectoryGlowMat, trajectoryGlow;
+            
+            // Asteroid path visualization variables
+            let asteroidPathGeom, asteroidPathMat, asteroidPathLine;
+            let testLines = [];  // Store test lines for debugging
+
+        // Global helper function to convert lng/lat to 3D vector
+        function lngLatToVec(lngDeg, latDeg) {
+            const toRad = Math.PI / 180;
+            const φ = latDeg * toRad, λ = lngDeg * toRad;
+            return new Vector3(
+                Math.cos(φ) * Math.cos(λ),
+                Math.sin(φ),
+                Math.cos(φ) * Math.sin(λ)
+            );
+        }
+
+        // Global helper function to convert 3D vector to lng/lat/alt
+        function vecToLngLatAlt(v) {
+            const toDeg = 180 / Math.PI;
+            const R = 1; // globe radius
+            const r = v.length();
+            const p = v.clone().divideScalar(r);
+            const lat = Math.asin(p.y) * toDeg;
+            const lng = Math.atan2(p.z, p.x) * toDeg;
+            const alt = r - R;
+            return { lng, lat, alt };
+        }
 
         // Function to update trajectory visualization
         function updateTrajectoryVisualization() {
@@ -234,7 +207,7 @@
             }
             
             const asteroidObj = objects.find(obj => obj.type === 'asteroid');
-            if (!asteroidObj || hasImpacted || !approachDir) {
+            if (!asteroidObj || hasImpacted || typeof approachDir === 'undefined' || !approachDir) {
                 trajectoryLine.visible = false;
                 trajectoryGlow.visible = false;
                 return;
@@ -298,6 +271,72 @@
                 }
             }
             return false;
+        }
+
+        // Function to update asteroid path visualization (simple straight line)
+        function updateAsteroidPath() {
+            console.log('updateAsteroidPath called');
+            
+            if (!asteroidPathLine) {
+                console.log('asteroidPathLine not initialized');
+                return;
+            }
+            
+            const asteroidObj = objects.find(obj => obj.type === 'asteroid');
+            if (!asteroidObj) {
+                console.log('No asteroid object found. Objects array:', objects.map(o => o.type));
+                asteroidPathLine.visible = false;
+                return;
+            }
+            
+            console.log('Creating simple trajectory line for asteroid at:', asteroidObj.lng, asteroidObj.lat);
+            
+            // Get current asteroid position in 3D space
+            const asteroidPos = lngLatToVec(asteroidObj.lng, asteroidObj.lat).multiplyScalar(asteroidObj.altitude + 1);
+            
+            // Create a simple direction vector pointing away from Earth
+            const earthCenter = new Vector3(0, 0, 0);
+            const awayFromEarth = asteroidPos.clone().sub(earthCenter).normalize();
+            
+            // Create trajectory line extending far behind and slightly ahead of asteroid
+            const lineLength = 20;  // Total line length
+            const behindDistance = 15;  // How far behind asteroid
+            const aheadDistance = 5;   // How far ahead of asteroid
+            
+            const startPoint = asteroidPos.clone().add(awayFromEarth.clone().multiplyScalar(-behindDistance));
+            const endPoint = asteroidPos.clone().add(awayFromEarth.clone().multiplyScalar(aheadDistance));
+            
+            console.log('Trajectory line from:', startPoint, 'to:', endPoint);
+            
+            // Create simple line with just 2 points
+            const points = [
+                startPoint.x, startPoint.y, startPoint.z,
+                endPoint.x, endPoint.y, endPoint.z
+            ];
+            
+            // Set bright color for visibility
+            asteroidPathMat.color.setHex(0xff0000); // Bright red
+            console.log('Simple trajectory line created with 2 points');
+            
+            // Update asteroid path geometry
+            if (points.length > 0) {
+                const positionArray = new Float32BufferAttribute(points, 3);
+                asteroidPathGeom.setAttribute('position', positionArray);
+                asteroidPathGeom.computeBoundingSphere();
+                
+                // Debug: Log first and last points
+                console.log('First point:', { x: points[0], y: points[1], z: points[2] });
+                console.log('Last point:', { x: points[points.length-3], y: points[points.length-2], z: points[points.length-1] });
+                console.log('Bounding sphere center:', asteroidPathGeom.boundingSphere.center);
+                console.log('Bounding sphere radius:', asteroidPathGeom.boundingSphere.radius);
+                
+                // Show asteroid path
+                asteroidPathLine.visible = true;
+                console.log('Asteroid path updated and made visible with', points.length / 3, 'points');
+            } else {
+                asteroidPathLine.visible = false;
+                console.log('No points generated, hiding asteroid path');
+            }
         }
 
         const dayNightShader = {
@@ -654,6 +693,96 @@
             laserMesh.visible = false;
             world.scene().add(laserMesh);
 
+            // Initialize trajectory visualization
+            trajectoryGeom = new BufferGeometry();
+            trajectoryMat = new LineBasicMaterial({ 
+                color: 0x00ffff, 
+                transparent: true, 
+                opacity: 0.7,
+                linewidth: 3
+            });
+            trajectoryLine = new Line(trajectoryGeom, trajectoryMat);
+            trajectoryLine.visible = false;
+            world.scene().add(trajectoryLine);
+
+            // Add a glowing effect for trajectory line
+            trajectoryGlowGeom = new BufferGeometry();
+            trajectoryGlowMat = new LineBasicMaterial({ 
+                color: 0x00ffff, 
+                transparent: true, 
+                opacity: 0.3,
+                linewidth: 6
+            });
+            trajectoryGlow = new Line(trajectoryGlowGeom, trajectoryGlowMat);
+            trajectoryGlow.visible = false;
+            world.scene().add(trajectoryGlow);
+
+            // Initialize asteroid path visualization (full trajectory from start to impact)
+            asteroidPathGeom = new BufferGeometry();
+            asteroidPathMat = new LineBasicMaterial({ 
+                color: 0xff4400,    // Bright orange-red
+                transparent: true, 
+                opacity: 1.0,       // Full opacity
+                linewidth: 1,       // Standard linewidth
+                depthTest: false,   // Always render on top
+                depthWrite: false   // Don't write to depth buffer
+            });
+            asteroidPathLine = new Line(asteroidPathGeom, asteroidPathMat);
+            asteroidPathLine.visible = false;
+            
+            // Set high render order to ensure it appears on top
+            asteroidPathLine.renderOrder = 999;
+            
+            world.scene().add(asteroidPathLine);
+
+            console.log('Asteroid path line initialized and added to scene');
+            
+            // Test: Add multiple test lines to verify line rendering works
+            
+            // Test line 1: Simple line from center outward (RED)
+            const testGeom1 = new BufferGeometry();
+            const testPoints1 = [
+                0, 0, 0,      // Center
+                5, 0, 0       // X-axis
+            ];
+            testGeom1.setAttribute('position', new Float32BufferAttribute(testPoints1, 3));
+            const testMat1 = new LineBasicMaterial({ color: 0xff0000, linewidth: 5 });
+            const testLine1 = new Line(testGeom1, testMat1);
+            world.scene().add(testLine1);
+            testLines.push(testLine1);
+            
+            // Test line 2: Around Earth orbit (GREEN)
+            const testGeom2 = new BufferGeometry();
+            const testPoints2 = [];
+            for (let i = 0; i <= 50; i++) {
+                const angle = (i / 50) * Math.PI * 2;
+                testPoints2.push(
+                    Math.cos(angle) * 2,  // Orbit at radius 2
+                    0,
+                    Math.sin(angle) * 2
+                );
+            }
+            testGeom2.setAttribute('position', new Float32BufferAttribute(testPoints2, 3));
+            const testMat2 = new LineBasicMaterial({ color: 0x00ff00, linewidth: 5 });
+            const testLine2 = new Line(testGeom2, testMat2);
+            world.scene().add(testLine2);
+            testLines.push(testLine2);
+            
+            // Test line 3: Diagonal line (BLUE)
+            const testGeom3 = new BufferGeometry();
+            const testPoints3 = [
+                -3, -3, -3,
+                3, 3, 3
+            ];
+            testGeom3.setAttribute('position', new Float32BufferAttribute(testPoints3, 3));
+            const testMat3 = new LineBasicMaterial({ color: 0x0000ff, linewidth: 5 });
+            const testLine3 = new Line(testGeom3, testMat3);
+            world.scene().add(testLine3);
+            testLines.push(testLine3);
+            
+            console.log('Test lines added: RED (x-axis), GREEN (orbit), BLUE (diagonal)');
+            console.log('Test red line added to scene');
+
             // Mouse interaction variables
             let isMouseDown = false;
             let isLaserActive = false;
@@ -661,15 +790,6 @@
             const mouse = new Vector2();
 
             // Satellite orbit pre-drawn as custom line
-            function lngLatToVec(lngDeg, latDeg) {
-                const toRad = Math.PI / 180;
-                const φ = latDeg * toRad, λ = lngDeg * toRad;
-                return new Vector3(
-                    Math.cos(φ) * Math.cos(λ),
-                    Math.sin(φ),
-                    Math.cos(φ) * Math.sin(λ)
-                );
-            }
             const orbitPoints = [];
             const numPoints = 360;
             const orbitRadius = 1 + satellite.altitude; // 1 + 1.1 = 2.1
@@ -707,12 +827,6 @@
                 IMPACT.lng = lng;
             }
 
-            // STRAIGHT-LINE approach based on impact angle (no great-circle)
-            let approachStart = null;   // THREE.Vector3
-            let approachEnd = null;     // THREE.Vector3
-            let approachDir = null;     // THREE.Vector3 (unit)
-            let approachLen = 0;        // scalar
-            let approachProgress = 0;   // distance traveled along the line
             // Replace fixed speed with slider-driven speed
             const R = 1;                // globe radius in world units for conversion
             const BASE_RPS = 0.6, V0_KMS = 20; // 0.6 radii/s at 20 km/s baseline
@@ -721,15 +835,6 @@
                 const v = Number(els.vel?.value ?? ui.velocityKms); // km/s from UI
                 const mul = Math.pow(v / V0_KMS, 0.8);              // responsive but not extreme
                 approachSpeedRps = Math.min(2.5, Math.max(0.2, BASE_RPS * mul));
-            }
-            function vecToLngLatAlt(v) {
-                const toDeg = 180 / Math.PI;
-                const r = v.length();
-                const p = v.clone().divideScalar(r);
-                const lat = Math.asin(p.y) * toDeg;
-                const lng = Math.atan2(p.z, p.x) * toDeg;
-                const alt = r - R;
-                return { lng, lat, alt };
             }
 
             function setupStraightApproach() {
@@ -761,13 +866,23 @@
                 asteroid.lng = llh.lng;
                 asteroid.altitude = llh.alt;
                 asteroid.deflected = false; // Reset deflection state
+                
+                // Update asteroid path after all variables are set
+                // Remove this call from setupStraightApproach to avoid timing issues
+                // if (typeof updateAsteroidPath === 'function') {
+                //     updateAsteroidPath();
+                // }
             }
 
             // Initial placement from UI + angle
             applyImpactFromUI();
             setupStraightApproach();
             recomputeApproachSpeed(); // NEW: set initial speed from slider
+            
             world.objectsData(objects);
+            
+            // Update asteroid path after everything is set up
+            updateAsteroidPath();
 
             // Explosion group (built on impact)
             let explosionGroup = null;
@@ -900,9 +1015,7 @@
                 // Hide trajectory line
                 if (trajectoryLine) trajectoryLine.visible = false;
                 if (trajectoryGlow) trajectoryGlow.visible = false;
-                
-                // Reset deflection progress
-                resetDeflectionProgress();
+                if (asteroidPathLine) asteroidPathLine.visible = false;
 
                 // Reset straight-line approach
                 objects.length = 0;
@@ -912,8 +1025,17 @@
                 // Reset asteroid object completely
                 asteroid.deflected = false; // Clear deflection state
                 objects.push(asteroid);
-                if (satellite) objects.push(satellite); // add satellite back if it exists
+                if (satellite) {
+                    objects.push(satellite); // add satellite back if it exists
+                    console.log('Satellite added back to objects');
+                } else {
+                    console.log('Satellite not available to add back');
+                }
+                console.log('Objects after reset:', objects.map(o => o.type));
                 world.objectsData(objects);
+                
+                // Update asteroid path after objects are ready
+                updateAsteroidPath();
 
                 hasImpacted = false;
                 craterPlaced = false;
@@ -1036,6 +1158,39 @@
                 // Keep globeRotation uniform in sync when user interacts
                 .onZoom(({ lng, lat }) => material.uniforms.globeRotation.value.set(lng, lat));
 
+            // Debug camera and scene information
+            setTimeout(() => {
+                const camera = world.camera();
+                const scene = world.scene();
+                console.log('=== CAMERA DEBUG ===');
+                console.log('Camera position:', camera.position);
+                console.log('Camera rotation:', camera.rotation);
+                console.log('Camera up:', camera.up);
+                console.log('Camera far:', camera.far);
+                console.log('Camera near:', camera.near);
+                console.log('=== SCENE DEBUG ===');
+                console.log('Scene children count:', scene.children.length);
+                console.log('Scene children types:', scene.children.map(child => child.type));
+                
+                // Look for our test lines in the scene
+                const lines = scene.children.filter(child => child.type === 'Line');
+                console.log('Lines in scene:', lines.length);
+                lines.forEach((line, index) => {
+                    console.log(`Line ${index}:`, {
+                        visible: line.visible,
+                        material: line.material.color.getHex(),
+                        geometry: line.geometry,
+                        position: line.position,
+                        scale: line.scale
+                    });
+                });
+                
+                // Set camera to a good position to see test lines
+                camera.position.set(0, 0, 8);  // Move camera back to see the scene
+                camera.lookAt(0, 0, 0);        // Look at center
+                console.log('Camera repositioned to see test lines');
+            }, 2000);  // Wait 2 seconds for everything to load
+
             // Mouse event handlers for satellite interaction
             function onMouseMove(event) {
                 mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
@@ -1103,27 +1258,11 @@
                 // Update laser geometry
                 const distance = satPos.distanceTo(targetPos);
                 const midPoint = satPos.clone().add(targetPos).multiplyScalar(0.5);
-                const laserGlow = new Mesh(glowGeometry, glowMaterial);
-                laserGlow.position.copy(midPoint);
-                laserGlow.setRotationFromQuaternion(quaternion);
-                world.scene().add(laserGlow);
                 
                 laserMesh.scale.set(laserRadius, distance, laserRadius);
                 laserMesh.position.copy(midPoint);
                 laserMesh.lookAt(targetPos);
                 laserMesh.visible = true;
-                laserGlow.visible = true;
-
-                // Thêm vào timeout để ẩn cả hai
-                setTimeout(() => {
-                    laserMesh.visible = false;
-                    if (laserGlow) {
-                        world.scene().remove(laserGlow);
-                        laserGlow.geometry.dispose();
-                        laserGlow.material.dispose();
-                    }
-                    console.log('Laser and glow hidden after 3 seconds');
-                }, 3000); // Tăng thời gian hiển thị lên 3 giây
                 
                 // Apply force to asteroid if hit
                 if (nearestAsteroid && !hasImpacted) {
@@ -1209,9 +1348,7 @@
                 const laserDirection = targetPos.clone().sub(satPos).normalize();
                 const distance = satPos.distanceTo(targetPos);
                 console.log('Laser distance:', distance, 'Direction:', laserDirection);
-                if (!laserMesh.geometry) {
-                    laserMesh.geometry = new CylinderGeometry(0.1, 0.1, 1, 8);
-                }
+                
                 // Update laser radius from UI
                 const currentLaserRadius = Number(els.laserRadius.value);
                 laserMesh.geometry.dispose();
@@ -1231,95 +1368,41 @@
                 laserMesh.setRotationFromQuaternion(quaternion);
                 
                 // Make laser bright red and visible - ensure material exists
-                laserMesh.material = new MeshBasicMaterial({ 
-                    color: 0x00ffff,
-                    transparent: true, 
-                    opacity: 1.0,
-                    emissive: 0x00ffff,
-                    emissiveIntensity: 3.0,
-                    depthWrite: false
-                });
+                if (laserMesh.material) {
+                    if (laserMesh.material.color && typeof laserMesh.material.color.setHex === 'function') {
+                        laserMesh.material.color.setHex(0xff0000);
+                    }
+                    if (laserMesh.material.emissive && typeof laserMesh.material.emissive.setHex === 'function') {
+                        laserMesh.material.emissive.setHex(0xff0000);
+                    }
+                    if (typeof laserMesh.material.emissiveIntensity !== 'undefined') {
+                        laserMesh.material.emissiveIntensity = 0.8;
+                    }
+                    if (typeof laserMesh.material.opacity !== 'undefined') {
+                        laserMesh.material.opacity = 0.95;
+                    }
+                } else {
+                    // Recreate material if it doesn't exist
+                    laserMesh.material = new MeshStandardMaterial({ 
+                        color: 0xff0000, 
+                        transparent: true, 
+                        opacity: 0.95,
+                        emissive: 0xff0000,
+                        emissiveIntensity: 0.8
+                    });
+                }
                 laserMesh.visible = true;
                 console.log('Laser visible:', laserMesh.visible, 'Position:', laserMesh.position);
                 
                 // Apply force to asteroid if hit and not impacted yet
                 if (nearestAsteroid && !hasImpacted) {
                     const laserPowerValue = Number(els.laserPower.value);
-                    
-                    // Update deflection progress
-                    const fullyDeflected = updateDeflectionProgress(laserPowerValue);
-                    
-                    const baseForce = laserPowerValue * 0.0005; // Increased force for better deflection
+                    const baseForce = laserPowerValue * 0.003; // Increased force for better deflection
                     
                     // Calculate deflection direction: perpendicular to current velocity for realistic deflection
                     const asteroidPos = lngLatToVec(nearestAsteroid.object.lng, nearestAsteroid.object.lat)
                         .multiplyScalar(nearestAsteroid.object.altitude + 1);
-                    const laserDir = laserDirection.clone().normalize();                    /* Thêm vào style.css */
-                    function playLaserSound() {
-                        // Tạo sound bằng Web Audio API
-                        const audioContext = new (window.AudioContext || window.webkitAudioContext)();
-                        const oscillator = audioContext.createOscillator();
-                        const gainNode = audioContext.createGain();
-                        
-                        oscillator.connect(gainNode);
-                        gainNode.connect(audioContext.destination);
-                        
-                        oscillator.frequency.setValueAtTime(800, audioContext.currentTime);
-                        oscillator.frequency.exponentialRampToValueAtTime(400, audioContext.currentTime + 0.5);
-                        
-                        gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
-                        gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.5);
-                        
-                        oscillator.start(audioContext.currentTime);
-                        oscillator.stop(audioContext.currentTime + 0.5);
-                    }
-                    
-                    // Gọi trong fireLaser():
-                    playLaserSound();                    // Trong hàm fireLaser(), sau phần thiết lập laserMesh:
-                    
-                    // Cập nhật glow effect
-                    laserGlowMesh.geometry.dispose();
-                    laserGlowMesh.geometry = new CylinderGeometry(currentLaserRadius * 3, currentLaserRadius * 3, distance, 8);
-                    laserGlowMesh.position.copy(midPoint);
-                    laserGlowMesh.setRotationFromQuaternion(quaternion);
-                    laserGlowMesh.visible = true;
-                    
-                    // Hide cả laser và glow
-                    setTimeout(() => {
-                        laserMesh.visible = false;
-                        laserGlowMesh.visible = false;
-                        console.log('Laser and glow hidden after 5 seconds');
-                    }, 5000);                    // Thêm vào sau phần tạo laserMesh (trong Promise.then()):
-                    
-                    // Tạo laser glow effect
-                    const laserGlowGeom = new CylinderGeometry(laserRadius * 3, laserRadius * 3, 1, 8);
-                    const laserGlowMat = new MeshBasicMaterial({
-                        color: 0x00ffff,
-                        transparent: true,
-                        opacity: 0.3,
-                        blending: AdditiveBlending,
-                        depthWrite: false
-                    });
-                    const laserGlowMesh = new Mesh(laserGlowGeom, laserGlowMat);
-                    laserGlowMesh.visible = false;
-                    world.scene().add(laserGlowMesh);                    // Tìm hàm fireLaser() và thay thế phần tạo laser beam:
-                    
-                    // Thay đổi màu laser thành xanh neon sáng hơn
-                    laserMesh.material.color.setHex(0x00ffff); // Cyan thay vì đỏ
-                    laserMesh.material.emissive.setHex(0x00ffff);
-                    laserMesh.material.emissiveIntensity = 5; // Tăng intensity
-                    laserMesh.material.opacity = 1.0; // Full opacity
-                    
-                    // Tăng kích thước laser để dễ nhìn thấy
-                    const currentLaserRadius = Math.max(5, Number(els.laserRadius.value)); // Minimum 0.1
-                    laserMesh.geometry.dispose();
-                    laserMesh.geometry = new CylinderGeometry(currentLaserRadius, currentLaserRadius, distance, 8);
-                    
-                    // Tăng thời gian hiển thị laser
-                    setTimeout(() => {
-                        laserMesh.visible = false;
-                        console.log('Laser hidden after 5 seconds');
-                    }, 5000); // Tăng từ 2000ms lên 5000ms
+                    const laserDir = laserDirection.clone().normalize();
                     
                     // Apply deflection force in laser direction (realistic physics)
                     const currentVelocity = approachDir.clone().multiplyScalar(approachSpeedRps);
@@ -1334,31 +1417,19 @@
                     approachSpeedRps = newSpeed;
                     
                     // Mark that asteroid has been deflected for trajectory change
-                    if (fullyDeflected) {
-                        nearestAsteroid.object.deflected = true;
-                        showNotification(
-                            '🎉 Asteroid Fully Deflected!', 
-                            'Asteroid trajectory successfully changed! Mission accomplished!',
-                            'success',
-                            4000
-                        );
-                    } else {
-                        const hitMessage = totalHits === 1 ? 'First hit!' : `Hit ${totalHits}!`;
-                        showNotification(
-                            '⚡ Laser Hit!', 
-                            `${hitMessage} Deflection: ${Math.round(deflectionProgress)}%. Power: ${laserPowerValue}%`,
-                            'success',
-                            2500
-                        );
-                    }
+                    nearestAsteroid.object.deflected = true;
                     
-                } else if (!nearestAsteroid) {
+                    // Update asteroid path to show new trajectory
+                    updateAsteroidPath();
+                    
                     showNotification(
-                        '❌ Missed Target', 
-                        'No asteroid in range. Laser fired into space.',
-                        'warning',
-                        2000
+                        '⚡ Laser Hit!', 
+                        `Asteroid successfully hit with laser power ${laserPowerValue}! Trajectory altered - monitoring deflection...`,
+                        'success',
+                        3000
                     );
+                    
+                    console.log('Asteroid deflected! New direction:', approachDir, 'New speed:', approachSpeedRps);
                 }
                 
                 // Hide laser after 2 seconds
@@ -1385,6 +1456,16 @@
                 console.log('Laser radius updated to:', laserRadius);
             });
 
+            // Toggle test lines button event listener
+            document.getElementById('toggle-test-lines').addEventListener('click', () => {
+                console.log('Toggle test lines clicked');
+                const visible = testLines[0]?.visible ?? false;
+                testLines.forEach(line => {
+                    line.visible = !visible;
+                });
+                console.log('Test lines now:', !visible ? 'VISIBLE' : 'HIDDEN');
+            });
+
             // Animate asteroid approach and impact + tail flicker + explosion growth
             // const ALTITUDE_DECAY_PER_FRAME = 0.01; // no longer used for motion
             let lastTick = performance.now();
@@ -1398,10 +1479,14 @@
                 lastTick = now;
 
                 // Update satellite orbit always
-                satelliteAngle += dt * 0.2;
-                satellite.lat = 0; // equatorial orbit
-                satellite.lng = (satelliteAngle * 180 / Math.PI) % 360; // convert angle to longitude
-                if (satellite.lng > 180) satellite.lng -= 360;
+                if (satellite) {
+                    satelliteAngle += dt * 0.2;
+                    satellite.lat = 0; // equatorial orbit
+                    satellite.lng = (satelliteAngle * 180 / Math.PI) % 360; // convert angle to longitude
+                    if (satellite.lng > 180) satellite.lng -= 360;
+                } else {
+                    console.log('Satellite object not found in animation');
+                }
                 world.objectsData(objects);
 
                 // Straight-line approach motion
@@ -1503,6 +1588,9 @@
 
                     // Update trajectory visualization
                     updateTrajectoryVisualization();
+                    
+                    // Update asteroid path visualization
+                    updateAsteroidPath();
 
                     // Impact processing - only trigger explosion when asteroid hits Earth
                     if (hasImpacted) {
@@ -1668,11 +1756,7 @@
             laserPower: document.getElementById('laser-power'),
             laserRadius: document.getElementById('laser-radius'),
             laserRadiusOut: document.getElementById('laser-radius-out'),
-            fireLaser: document.getElementById('fire-laser'),
-            // Deflection progress elements
-            deflectionFill: document.getElementById('deflection-fill'),
-            deflectionPercent: document.getElementById('deflection-percent'),
-            deflectionStatus: document.getElementById('deflection-status')
+            fireLaser: document.getElementById('fire-laser')
         };
         const getDiameterMeters = () => {
             const d = Number(els.diameter.value || ui.diameter);

@@ -48,63 +48,10 @@ body {
     box-shadow:
         0 10px 28px rgba(0, 0, 0, 0.55),
         0 0 0 1px rgba(255, 255, 255, 0.03) inset,
-        0 0 40px rgba(94, 231, 255, 0.25);
-    backdrop-filter: blur(12px);
-    border-radius: 12px;
-    font-family: 'SF Pro Display', 'Segoe UI', system-ui, sans-serif;
-    color: var(--text);
-}
-
-/* Progress Bar Styling */
-.deflection-progress {
-    margin-bottom: 16px;
-    padding: 12px;
-    background: rgba(255, 255, 255, 0.05);
-    border-radius: 8px;
-    border: 1px solid rgba(94, 231, 255, 0.3);
-}
-
-.progress-container {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    margin: 8px 0;
-}
-
-.progress-bar {
-    flex: 1;
-    height: 20px;
-    background: rgba(255, 255, 255, 0.1);
-    border-radius: 10px;
-    overflow: hidden;
-    border: 1px solid rgba(255, 255, 255, 0.2);
-}
-
-.progress-fill {
-    height: 100%;
-    background: linear-gradient(90deg, 
-        #ff4444 0%, 
-        #ff8844 30%, 
-        #ffaa44 60%, 
-        #44ff44 100%);
-    width: 0%;
-    border-radius: 10px;
-    transition: width 0.3s ease;
-    box-shadow: 0 0 10px rgba(94, 231, 255, 0.5);
-}
-
-.deflection-status {
-    font-size: 12px;
-    color: var(--muted);
-    text-align: center;
-    margin-top: 5px;
-}
-
-#deflection-percent {
-    font-weight: bold;
-    color: var(--accent);
-    min-width: 35px;
-    text-align: right;
+        0 0 22px 2px rgba(94, 231, 255, 0.16);
+    backdrop-filter: blur(8px);
+    color: #e6eefc;
+    font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
 }
 
 #controls:hover {
@@ -434,7 +381,8 @@ input[type="range"]::-moz-range-track {
     max-width: 400px;
     transform: translateX(100%);
     opacity: 0;
-    
+    transition: all 0.3s ease-in-out;
+    backdrop-filter: blur(5px);
 }
 
 .notification.show {
@@ -681,15 +629,3 @@ input[type="range"]::-moz-range-track {
 .secondary-btn:active {
     transform: translateY(1px);
 }
-/* Thêm vào style.css */
-@keyframes laser-pulse {
-    0% { opacity: 1; transform: scale(20); }
-    50% { opacity: 0.7; transform: scale(20); }
-    100% { opacity: 1; transform: scale(20); }
-}
-
-.laser-active {
-    animation: laser-pulse 1s ease-in-out infinite;
-    transition: all 0.3s ease-in-out;
-    backdrop-filter: blur(5px);
-}    

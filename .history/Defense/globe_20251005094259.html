@@ -1231,14 +1231,29 @@
                 laserMesh.setRotationFromQuaternion(quaternion);
                 
                 // Make laser bright red and visible - ensure material exists
-                laserMesh.material = new MeshBasicMaterial({ 
-                    color: 0x00ffff,
-                    transparent: true, 
-                    opacity: 1.0,
-                    emissive: 0x00ffff,
-                    emissiveIntensity: 3.0,
-                    depthWrite: false
-                });
+                if (laserMesh.material) {
+                    if (laserMesh.material.color && typeof laserMesh.material.color.setHex === 'function') {
+                        laserMesh.material.color.setHex(0xff0000);
+                    }
+                    if (laserMesh.material.emissive && typeof laserMesh.material.emissive.setHex === 'function') {
+                        laserMesh.material.emissive.setHex(0xff0000);
+                    }
+                    if (typeof laserMesh.material.emissiveIntensity !== 'undefined') {
+                        laserMesh.material.emissiveIntensity = 0.8;
+                    }
+                    if (typeof laserMesh.material.opacity !== 'undefined') {
+                        laserMesh.material.opacity = 0.95;
+                    }
+                } else {
+                    // Recreate material if it doesn't exist
+                    laserMesh.material = new MeshStandardMaterial({ 
+                        color: 0xff0000, 
+                        transparent: true, 
+                        opacity: 0.95,
+                        emissive: 0xff0000,
+                        emissiveIntensity: 0.8
+                    });
+                }
                 laserMesh.visible = true;
                 console.log('Laser visible:', laserMesh.visible, 'Position:', laserMesh.position);
                 
@@ -1352,6 +1367,7 @@
                         );
                     }
                     
+                    console.log('Asteroid hit! Progress:', deflectionProgress, '% New direction:', approachDir, 'New speed:', approachSpeedRps);
                 } else if (!nearestAsteroid) {
                     showNotification(
                         '❌ Missed Target', 

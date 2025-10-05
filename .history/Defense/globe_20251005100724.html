@@ -1352,6 +1352,22 @@
                         );
                     }
                     
+                            '🎉 Asteroid Fully Deflected!', 
+                            'Asteroid trajectory successfully changed! Mission accomplished!',
+                            'success',
+                            4000
+                        );
+                    } else {
+                        const hitMessage = totalHits === 1 ? 'First hit!' : `Hit ${totalHits}!`;
+                        showNotification(
+                            '⚡ Laser Hit!', 
+                            `${hitMessage} Deflection: ${Math.round(deflectionProgress)}%. Power: ${laserPowerValue}%`,
+                            'success',
+                            2500
+                        );
+                    }
+                    
+                    console.log('Asteroid hit! Progress:', deflectionProgress, '% New direction:', approachDir, 'New speed:', approachSpeedRps);
                 } else if (!nearestAsteroid) {
                     showNotification(
                         '❌ Missed Target', 
@@ -1642,7 +1658,7 @@
             }
 
             requestAnimationFrame(animate);
-        });
+        
 
         // ADD: UI state, bindings, mapping (moved to top so it's defined before use)
         const ui = {

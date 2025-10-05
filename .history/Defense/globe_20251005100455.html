@@ -1350,8 +1350,17 @@
                             'success',
                             2500
                         );
+                    }else {
+                        const hitMessage = totalHits === 1 ? 'First hit!' : `Hit ${totalHits}!`;
+                        showNotification(
+                            '⚡ Laser Hit!', 
+                            `${hitMessage} Deflection: ${Math.round(deflectionProgress)}%. Power: ${laserPowerValue}%`,
+                            'success',
+                            2500
+                        );
                     }
                     
+                    console.log('Asteroid hit! Progress:', deflectionProgress, '% New direction:', approachDir, 'New speed:', approachSpeedRps);
                 } else if (!nearestAsteroid) {
                     showNotification(
                         '❌ Missed Target', 

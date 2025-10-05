@@ -1,0 +1,332 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Rocket Defense System Test</title>
+    <link rel="stylesheet" href="style.css" />
+    <script src="//cdn.jsdelivr.net/npm/globe.gl"></script>
+</head>
+
+<body>
+    <!-- Controls Sidebar -->
+    <div id="controls">
+        <h3>🚀 Rocket Defense System</h3>
+        
+        <div id="game-status" class="game-status">
+            <div class="status-box ready">
+                <span class="status-label">Status:</span>
+                <span id="status-value">READY</span>
+            </div>
+        </div>
+        
+        <div class="game-progress">
+            <div class="label">Deflection Progress</div>
+            <div class="progress-bar">
+                <div id="deflection-progress" class="progress-fill">0%</div>
+            </div>
+        </div>
+
+        <div class="label">
+            Asteroid Properties
+            <span class="info" data-tip-title="Asteroid Properties"
+                data-tip="Properties of the incoming asteroid that affect how much rocket power is needed to deflect it."></span>
+        </div>
+        
+        <div class="row">
+            <label>Diameter</label>
+            <input id="ui-diameter" type="number" min="500" max="5000" step="100" value="2300" />
+            <span>m</span>
+        </div>
+
+        <div class="row">
+            <label>Density</label>
+            <input id="ui-density" type="number" min="1000" max="5000" step="50" value="2750" />
+            <span>kg/m³</span>
+        </div>
+
+        <div class="row">
+            <label>Velocity</label>
+            <input id="ui-velocity" type="number" min="5" max="50" step="1" value="20" />
+            <span>km/s</span>
+        </div>
+
+        <div class="row">
+            <label>Angle</label>
+            <input id="ui-angle" type="number" min="15" max="90" step="5" value="45" />
+            <span>°</span>
+        </div>
+
+        <button id="simulateBtn" class="primary-btn">🚀 Start Rocket Defense</button>
+
+        <hr>
+
+        <div class="label">
+            🚀 Rocket Controls
+            <span class="info" data-tip-title="Rocket Controls"
+                data-tip="Control the rocket missile system to intercept and deflect the asteroid."></span>
+        </div>
+        
+        <div class="row">
+            <label>Power Level</label>
+            <input id="laser-power" type="range" min="10" max="100" value="50" class="full" />
+            <span id="laser-power-out">50%</span>
+        </div>
+        
+        <div class="row">
+            <label>Rocket Size</label>
+            <input id="laser-radius" type="range" min="0.05" max="0.3" value="0.15" step="0.01" class="full" />
+            <span id="laser-radius-out">0.15</span>
+        </div>
+
+        <div id="laser-stats" class="laser-stats">
+            <div class="stat-row">
+                <span class="stat-label">🎯 Impact Force:</span>
+                <span class="stat-value" id="force-value">0 N</span>
+            </div>
+            <div class="stat-row">
+                <span class="stat-label">🛰️ Trajectory Change:</span>
+                <span class="stat-value" id="deflection-value">0°</span>
+            </div>
+        </div>
+
+        <button id="fire-laser" class="action-btn">🚀 FIRE ROCKET</button>
+        <button id="reset-simulation" class="secondary-btn" style="display: none;">Reset Simulation</button>
+    </div>
+    
+    <!-- Game messages display -->
+    <div id="game-message" class="game-message">
+        Welcome to Rocket Defense System. Configure rocket and press Start Defense.
+    </div>
+
+    <div id="globeViz"></div>
+    <div id="time"></div>
+
+    <script type="module">
+        // Basic rocket test script - with 3D scene rendering
+        import { 
+            Scene, 
+            PerspectiveCamera, 
+            WebGLRenderer, 
+            DirectionalLight, 
+            AmbientLight,
+            Vector3,
+            GridHelper,
+            AxesHelper
+        } from 'https://esm.sh/three@0.167.0';
+        import { GLTFLoader } from 'https://esm.sh/three@0.167.0/examples/jsm/loaders/GLTFLoader.js';
+        import { OrbitControls } from 'https://esm.sh/three@0.167.0/examples/jsm/controls/OrbitControls.js';
+        
+        console.log('🚀 Rocket Defense System Test Loading...');
+        
+        // Create 3D scene for rocket preview
+        const scene = new Scene();
+        const camera = new PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+        const renderer = new WebGLRenderer({ antialias: true, alpha: true });
+        
+        // Setup renderer
+        const globeContainer = document.getElementById('globeViz');
+        renderer.setSize(globeContainer.clientWidth, globeContainer.clientHeight);
+        renderer.setClearColor(0x000428, 1);
+        globeContainer.appendChild(renderer.domElement);
+        
+        // Add lights
+        const ambientLight = new AmbientLight(0x404040, 0.6);
+        scene.add(ambientLight);
+        
+        const directionalLight = new DirectionalLight(0xffffff, 1);
+        directionalLight.position.set(5, 5, 5);
+        scene.add(directionalLight);
+        
+        // Add grid and axes helpers
+        const gridHelper = new GridHelper(10, 10, 0x444444, 0x222222);
+        scene.add(gridHelper);
+        
+        const axesHelper = new AxesHelper(2);
+        scene.add(axesHelper);
+        
+        // Setup camera controls
+        const controls = new OrbitControls(camera, renderer.domElement);
+        controls.enableDamping = true;
+        controls.dampingFactor = 0.05;
+        controls.screenSpacePanning = false;
+        controls.minDistance = 2;
+        controls.maxDistance = 20;
+        controls.maxPolarAngle = Math.PI;
+        
+        // Position camera
+        camera.position.set(3, 3, 3);
+        camera.lookAt(0, 0, 0);
+        
+        // Rocket model variables
+        let rocketModel = null;
+        let currentScale = 1.0;
+        
+        // Test rocket.glb loading
+        const gltfLoader = new GLTFLoader();
+        const modelStatus = document.getElementById('model-status');
+        
+        gltfLoader.load('rocket.glb', 
+            (gltf) => {
+                console.log('✅ Rocket GLTF loaded successfully:', gltf);
+                
+                rocketModel = gltf.scene;
+                rocketModel.scale.set(currentScale, currentScale, currentScale);
+                rocketModel.position.set(0, 0, 0);
+                
+                // Center the model
+                const box = new THREE.Box3().setFromObject(rocketModel);
+                const center = box.getCenter(new Vector3());
+                rocketModel.position.sub(center);
+                
+                scene.add(rocketModel);
+                
+                modelStatus.textContent = 'Loaded Successfully ✅';
+                modelStatus.style.color = '#00cc44';
+                
+                // Update camera to see the model better
+                const size = box.getSize(new Vector3());
+                const maxDim = Math.max(size.x, size.y, size.z);
+                camera.position.set(maxDim * 2, maxDim * 2, maxDim * 2);
+                controls.update();
+            },
+            (progress) => {
+                console.log('🔄 Loading progress:', progress);
+                if (progress.total > 0) {
+                    const percent = Math.round((progress.loaded / progress.total) * 100);
+                    modelStatus.textContent = `Loading... ${percent}%`;
+                }
+            },
+            (error) => {
+                console.error('❌ Error loading rocket.glb:', error);
+                modelStatus.textContent = 'Failed to Load ❌';
+                modelStatus.style.color = '#ff4444';
+                
+                // Create a simple placeholder if rocket.glb not found
+                const geometry = new THREE.ConeGeometry(0.2, 1, 8);
+                const material = new THREE.MeshLambertMaterial({ color: 0xff6b35 });
+                const placeholder = new THREE.Mesh(geometry, material);
+                placeholder.position.y = 0.5;
+                scene.add(placeholder);
+                
+                modelStatus.textContent = 'Using Placeholder 🚀';
+                modelStatus.style.color = '#ff6b35';
+            }
+        );
+        
+        // Animation loop
+        function animate() {
+            requestAnimationFrame(animate);
+            
+            // Rotate rocket slowly
+            if (rocketModel) {
+                rocketModel.rotation.y += 0.005;
+            }
+            
+            controls.update();
+            renderer.render(scene, camera);
+        }
+        animate();
+        
+        // Handle window resize
+        window.addEventListener('resize', () => {
+            const container = document.getElementById('globeViz');
+            camera.aspect = container.clientWidth / container.clientHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(container.clientWidth, container.clientHeight);
+        });
+        
+        // Test scale functions
+        window.testRocketScale = (scale) => {
+            console.log('🔧 Testing rocket scale:', scale);
+            currentScale = scale;
+            document.getElementById('model-scale').textContent = scale + 'x';
+            
+            if (rocketModel) {
+                rocketModel.scale.set(scale, scale, scale);
+            }
+        };
+        
+        // Basic UI interactions
+        document.getElementById('simulateBtn').addEventListener('click', () => {
+            console.log('🚀 Launch Rocket Defense clicked!');
+            document.getElementById('game-message').textContent = 'Rocket Defense System Activated! Ready to intercept asteroid.';
+            
+            // Add some visual feedback
+            if (rocketModel) {
+                rocketModel.rotation.x = Math.PI / 4; // Tilt rocket
+            }
+        });
+        
+        document.getElementById('fire-rocket').addEventListener('click', () => {
+            console.log('🎯 Fire Rocket clicked!');
+            document.getElementById('game-message').textContent = 'Rocket fired! Targeting asteroid for interception.';
+            
+            // Animate rocket firing
+            if (rocketModel) {
+                rocketModel.position.y += 0.5;
+                setTimeout(() => {
+                    if (rocketModel) rocketModel.position.y -= 0.5;
+                }, 1000);
+            }
+        });
+        
+        // Update rocket power display
+        document.getElementById('rocket-power').addEventListener('input', (e) => {
+            const power = e.target.value;
+            document.getElementById('rocket-power-out').textContent = power + '%';
+            
+            // Update force value
+            const force = Math.round(power * 10);
+            document.getElementById('force-value').textContent = force + ' N';
+        });
+        
+        // Update rocket range display
+        document.getElementById('rocket-range').addEventListener('input', (e) => {
+            const range = e.target.value;
+            document.getElementById('rocket-range-out').textContent = range;
+            
+            // Update targeting status
+            document.getElementById('targeting-status').textContent = 
+                parseFloat(range) > 0.3 ? 'LONG RANGE' : 'SHORT RANGE';
+        });
+        
+        // Add keyboard controls for testing
+        document.addEventListener('keydown', (event) => {
+            if (!rocketModel) return;
+            
+            const moveAmount = 0.1;
+            switch(event.key) {
+                case 'w': case 'W':
+                    rocketModel.position.z -= moveAmount;
+                    break;
+                case 's': case 'S':
+                    rocketModel.position.z += moveAmount;
+                    break;
+                case 'a': case 'A':
+                    rocketModel.position.x -= moveAmount;
+                    break;
+                case 'd': case 'D':
+                    rocketModel.position.x += moveAmount;
+                    break;
+                case 'q': case 'Q':
+                    rocketModel.position.y += moveAmount;
+                    break;
+                case 'e': case 'E':
+                    rocketModel.position.y -= moveAmount;
+                    break;
+                case 'r': case 'R':
+                    // Reset position and rotation
+                    rocketModel.position.set(0, 0, 0);
+                    rocketModel.rotation.set(0, 0, 0);
+                    break;
+            }
+        });
+        
+        // Add instructions
+        setTimeout(() => {
+            console.log('🎮 Controls: WASD = move, Q/E = up/down, R = reset, Mouse = orbit camera');
+        }, 1000);
+    </script>
+</body>
+</html>

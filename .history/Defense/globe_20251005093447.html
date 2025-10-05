@@ -1103,27 +1103,11 @@
                 // Update laser geometry
                 const distance = satPos.distanceTo(targetPos);
                 const midPoint = satPos.clone().add(targetPos).multiplyScalar(0.5);
-                const laserGlow = new Mesh(glowGeometry, glowMaterial);
-                laserGlow.position.copy(midPoint);
-                laserGlow.setRotationFromQuaternion(quaternion);
-                world.scene().add(laserGlow);
                 
                 laserMesh.scale.set(laserRadius, distance, laserRadius);
                 laserMesh.position.copy(midPoint);
                 laserMesh.lookAt(targetPos);
                 laserMesh.visible = true;
-                laserGlow.visible = true;
-
-                // Thêm vào timeout để ẩn cả hai
-                setTimeout(() => {
-                    laserMesh.visible = false;
-                    if (laserGlow) {
-                        world.scene().remove(laserGlow);
-                        laserGlow.geometry.dispose();
-                        laserGlow.material.dispose();
-                    }
-                    console.log('Laser and glow hidden after 3 seconds');
-                }, 3000); // Tăng thời gian hiển thị lên 3 giây
                 
                 // Apply force to asteroid if hit
                 if (nearestAsteroid && !hasImpacted) {
@@ -1209,9 +1193,7 @@
                 const laserDirection = targetPos.clone().sub(satPos).normalize();
                 const distance = satPos.distanceTo(targetPos);
                 console.log('Laser distance:', distance, 'Direction:', laserDirection);
-                if (!laserMesh.geometry) {
-                    laserMesh.geometry = new CylinderGeometry(0.1, 0.1, 1, 8);
-                }
+                
                 // Update laser radius from UI
                 const currentLaserRadius = Number(els.laserRadius.value);
                 laserMesh.geometry.dispose();
@@ -1231,14 +1213,29 @@
                 laserMesh.setRotationFromQuaternion(quaternion);
                 
                 // Make laser bright red and visible - ensure material exists
-                laserMesh.material = new MeshBasicMaterial({ 
-                    color: 0x00ffff,
-                    transparent: true, 
-                    opacity: 1.0,
-                    emissive: 0x00ffff,
-                    emissiveIntensity: 3.0,
-                    depthWrite: false
-                });
+                if (laserMesh.material) {
+                    if (laserMesh.material.color && typeof laserMesh.material.color.setHex === 'function') {
+                        laserMesh.material.color.setHex(0xff0000);
+                    }
+                    if (laserMesh.material.emissive && typeof laserMesh.material.emissive.setHex === 'function') {
+                        laserMesh.material.emissive.setHex(0xff0000);
+                    }
+                    if (typeof laserMesh.material.emissiveIntensity !== 'undefined') {
+                        laserMesh.material.emissiveIntensity = 0.8;
+                    }
+                    if (typeof laserMesh.material.opacity !== 'undefined') {
+                        laserMesh.material.opacity = 0.95;
+                    }
+                } else {
+                    // Recreate material if it doesn't exist
+                    laserMesh.material = new MeshStandardMaterial({ 
+                        color: 0xff0000, 
+                        transparent: true, 
+                        opacity: 0.95,
+                        emissive: 0xff0000,
+                        emissiveIntensity: 0.8
+                    });
+                }
                 laserMesh.visible = true;
                 console.log('Laser visible:', laserMesh.visible, 'Position:', laserMesh.position);
                 
@@ -1307,11 +1304,11 @@
                     // Thay đổi màu laser thành xanh neon sáng hơn
                     laserMesh.material.color.setHex(0x00ffff); // Cyan thay vì đỏ
                     laserMesh.material.emissive.setHex(0x00ffff);
-                    laserMesh.material.emissiveIntensity = 5; // Tăng intensity
+                    laserMesh.material.emissiveIntensity = 1.5; // Tăng intensity
                     laserMesh.material.opacity = 1.0; // Full opacity
                     
                     // Tăng kích thước laser để dễ nhìn thấy
-                    const currentLaserRadius = Math.max(5, Number(els.laserRadius.value)); // Minimum 0.1
+                    const currentLaserRadius = Math.max(1, Number(els.laserRadius.value)); // Minimum 0.1
                     laserMesh.geometry.dispose();
                     laserMesh.geometry = new CylinderGeometry(currentLaserRadius, currentLaserRadius, distance, 8);
                     
@@ -1352,6 +1349,7 @@
                         );
                     }
                     
+                    console.log('Asteroid hit! Progress:', deflectionProgress, '% New direction:', approachDir, 'New speed:', approachSpeedRps);
                 } else if (!nearestAsteroid) {
                     showNotification(
                         '❌ Missed Target', 

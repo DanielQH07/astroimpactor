@@ -689,7 +689,7 @@ input[type="range"]::-moz-range-track {
 }
 
 .laser-active {
-    animation: laser-pulse 1s ease-in-out infinite;
+    animation: laser-pulse 0.2s ease-in-out infinite;
     transition: all 0.3s ease-in-out;
     backdrop-filter: blur(5px);
 }    

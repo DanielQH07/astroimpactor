@@ -106,6 +106,7 @@ body {
     min-width: 35px;
     text-align: right;
 }
+}
 
 #controls:hover {
     box-shadow:
@@ -434,7 +435,17 @@ input[type="range"]::-moz-range-track {
     max-width: 400px;
     transform: translateX(100%);
     opacity: 0;
+    /* Thêm vào style.css */
+    @keyframes laser-pulse {
+        0% { opacity: 1; transform: scale(1); }
+        50% { opacity: 0.7; transform: scale(1.1); }
+        100% { opacity: 1; transform: scale(1); }
+    }
     
+    .laser-active {
+        animation: laser-pulse 0.2s ease-in-out infinite;
+    }    transition: all 0.3s ease-in-out;
+    backdrop-filter: blur(5px);
 }
 
 .notification.show {
@@ -681,15 +692,3 @@ input[type="range"]::-moz-range-track {
 .secondary-btn:active {
     transform: translateY(1px);
 }
-/* Thêm vào style.css */
-@keyframes laser-pulse {
-    0% { opacity: 1; transform: scale(20); }
-    50% { opacity: 0.7; transform: scale(20); }
-    100% { opacity: 1; transform: scale(20); }
-}
-
-.laser-active {
-    animation: laser-pulse 1s ease-in-out infinite;
-    transition: all 0.3s ease-in-out;
-    backdrop-filter: blur(5px);
-}    

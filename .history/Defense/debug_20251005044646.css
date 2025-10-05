@@ -1,0 +1,204 @@
+/* Debug and Control Panel Styles */
+
+/* Enhanced control panel */
+#controls {
+    position: fixed;
+    top: 10px;
+    left: 10px;
+    width: 300px;
+    background: rgba(0, 0, 0, 0.8);
+    border-radius: 10px;
+    padding: 15px;
+    color: white;
+    font-family: 'Arial', sans-serif;
+    z-index: 1000;
+    backdrop-filter: blur(10px);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+}
+
+#controls h3 {
+    margin-top: 0;
+    color: #ffaa00;
+    text-align: center;
+    text-shadow: 0 0 10px rgba(255, 170, 0, 0.5);
+}
+
+/* Debug panel */
+#debug-panel {
+    position: fixed;
+    top: 10px;
+    right: 10px;
+    width: 350px;
+    background: rgba(0, 20, 40, 0.9);
+    border-radius: 10px;
+    padding: 15px;
+    color: #00ff88;
+    font-family: 'Courier New', monospace;
+    font-size: 12px;
+    z-index: 1000;
+    backdrop-filter: blur(10px);
+    border: 1px solid rgba(0, 255, 136, 0.3);
+    max-height: 80vh;
+    overflow-y: auto;
+}
+
+#debug-panel h4 {
+    margin-top: 0;
+    color: #00ddff;
+    text-align: center;
+    font-size: 14px;
+}
+
+.debug-section {
+    margin: 10px 0;
+    padding: 8px;
+    background: rgba(0, 0, 0, 0.3);
+    border-radius: 5px;
+    border-left: 3px solid #00ff88;
+}
+
+.debug-label {
+    color: #ffaa00;
+    font-weight: bold;
+}
+
+.debug-value {
+    color: #ffffff;
+    margin-left: 10px;
+}
+
+/* Enhanced buttons */
+button {
+    background: linear-gradient(45deg, #ff4444, #ff6666);
+    border: none;
+    color: white;
+    padding: 10px 15px;
+    margin: 5px 0;
+    border-radius: 5px;
+    cursor: pointer;
+    font-weight: bold;
+    transition: all 0.3s ease;
+    width: 100%;
+    box-shadow: 0 0 10px rgba(255, 68, 68, 0.3);
+}
+
+button:hover {
+    background: linear-gradient(45deg, #ff6666, #ff8888);
+    box-shadow: 0 0 20px rgba(255, 68, 68, 0.6);
+    transform: translateY(-2px);
+}
+
+button:active {
+    transform: translateY(0);
+}
+
+/* Specific button styles */
+#toggle-test-lines {
+    background: linear-gradient(45deg, #00aa44, #00cc66);
+    box-shadow: 0 0 10px rgba(0, 170, 68, 0.3);
+}
+
+#toggle-test-lines:hover {
+    background: linear-gradient(45deg, #00cc66, #00ee88);
+    box-shadow: 0 0 20px rgba(0, 170, 68, 0.6);
+}
+
+#show-asteroid-path {
+    background: linear-gradient(45deg, #4444ff, #6666ff);
+    box-shadow: 0 0 10px rgba(68, 68, 255, 0.3);
+}
+
+#show-asteroid-path:hover {
+    background: linear-gradient(45deg, #6666ff, #8888ff);
+    box-shadow: 0 0 20px rgba(68, 68, 255, 0.6);
+}
+
+#toggle-debug {
+    background: linear-gradient(45deg, #ffaa00, #ffcc44);
+    box-shadow: 0 0 10px rgba(255, 170, 0, 0.3);
+}
+
+#toggle-debug:hover {
+    background: linear-gradient(45deg, #ffcc44, #ffee66);
+    box-shadow: 0 0 20px rgba(255, 170, 0, 0.6);
+}
+
+/* Status indicators */
+.status-indicator {
+    display: inline-block;
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    margin-right: 8px;
+}
+
+.status-active {
+    background: #00ff00;
+    box-shadow: 0 0 10px rgba(0, 255, 0, 0.5);
+}
+
+.status-inactive {
+    background: #ff4444;
+    box-shadow: 0 0 10px rgba(255, 68, 68, 0.5);
+}
+
+.status-warning {
+    background: #ffaa00;
+    box-shadow: 0 0 10px rgba(255, 170, 0, 0.5);
+}
+
+/* Trajectory info panel */
+#trajectory-info {
+    position: fixed;
+    bottom: 10px;
+    left: 10px;
+    background: rgba(0, 0, 0, 0.8);
+    color: white;
+    padding: 10px;
+    border-radius: 5px;
+    font-family: 'Arial', sans-serif;
+    font-size: 12px;
+    border: 1px solid rgba(255, 255, 255, 0.2);
+}
+
+/* Responsive design */
+@media (max-width: 768px) {
+    #controls {
+        width: 280px;
+        font-size: 14px;
+    }
+    
+    #debug-panel {
+        width: 300px;
+        font-size: 11px;
+    }
+}
+
+/* Animation for debug updates */
+.debug-update {
+    animation: flashUpdate 0.3s ease;
+}
+
+@keyframes flashUpdate {
+    0% { background-color: rgba(0, 255, 136, 0.2); }
+    100% { background-color: transparent; }
+}
+
+/* Scrollbar for debug panel */
+#debug-panel::-webkit-scrollbar {
+    width: 6px;
+}
+
+#debug-panel::-webkit-scrollbar-track {
+    background: rgba(0, 0, 0, 0.3);
+    border-radius: 3px;
+}
+
+#debug-panel::-webkit-scrollbar-thumb {
+    background: rgba(0, 255, 136, 0.5);
+    border-radius: 3px;
+}
+
+#debug-panel::-webkit-scrollbar-thumb:hover {
+    background: rgba(0, 255, 136, 0.7);
+}
