@@ -1,23 +1,13 @@
-# 3D Solar System in THREE.js
+# AstroImpactor for Education
 
-Welcome to the **3D Solar System** project, a dynamic and interactive simulation of our solar system created using THREE.js and the Vite framework. This project showcases various advanced features and effects to provide an immersive experience of the celestial bodies in our solar system. The project is fully created by Karol Fryc.
-
-Overview available at: https://w21030911.nuwebspace.co.uk/graphics/assessment/
-
-![Solar_System](images/solar_system.png)
-
-![Earth](images/earthnew.png)
-
-![Mercury](images/mercury.png)
-
-![Mars](images/mars.png)
+Welcome to the **Astroimpactor** project, a dynamic and interactive simulation about **NEOs (Near Earth Objects) and meteorite impact** created during NASA Space App Challenges's Hackathon.
 
 ## Features
 
 ### Standard Setup
 - **Scene, Camera, Renderer**: Basic setup for rendering 3D scenes using THREE.js.
 - **Controls**: Interactive controls for navigating the 3D space.
-- **Texture Loaders**: Efficient loading of textures for planets, moons, and other objects.
+- **Texture Loaders**: Efficient loading of textures for planets, moons, and other objects. Especially for NEOs
 
 ### Postprocessing Effects
 - **BloomPass**: Adds a glowing effect to the Sun.
@@ -47,9 +37,9 @@ Overview available at: https://w21030911.nuwebspace.co.uk/graphics/assessment/
 ### Shadows
 - Realistic shadow casting from the PointLight at the Sun’s center.
 
-### Asteroid Belts
-- **Procedurally Generated**: 1000 asteroids for the belt between Mars and Jupiter, 3000 for the Kuiper belt.
-- **Performance Optimization**: Simplified textures to ensure high performance.
+### Asteroid
+- **Realistic meteorite impact**: Realistic simulation of impact crater and meteorite shape based on custom data.
+- **Procedurally Generated**: Generate over 10 thousands of NEOs at current date using NEO ESA data to calculate the orbit.
 
 ### Select Feature
 - **Hover Effect**: White outline around planets when hovered.
@@ -62,31 +52,32 @@ Overview available at: https://w21030911.nuwebspace.co.uk/graphics/assessment/
 - [Solar System Scope Textures](https://www.solarsystemscope.com/textures/)
 - [Planet Pixel Emporium](https://planetpixelemporium.com/index.php)
 - [TurboSquid](https://www.turbosquid.com/)
+- [NEO data](https://neo.ssa.esa.int/computer-access)
 
 ## Installation and Setup
 1. Clone the repository:
     ```sh
-    git clone https://github.com/your-username/3d-solar-system.git
+    git clone https://github.com/DanielQH07/astroimpactor.git
     ```
 2. Navigate to the project directory:
     ```sh
-    cd 3d-solar-system
+    cd astroimpactor
     ```
 3. Install dependencies:
     ```sh
-    npm install
+    rm -rf node_modules
+    npm install --legacy-peer-deps
     ```
 4. Start the development server:
     ```sh
     npm run dev
     ```
-5. Open your browser and navigate to `http://localhost:3000` to see the 3D Solar System in action.
+5. Open your browser and navigate to `http://localhost:5173/src/index.html` to see the the result.
+6. Enjoy it :) !
 
 ## Conclusion
-This project is a comprehensive representation of our solar system, bringing together realistic modeling, advanced visual effects, and interactive features. Explore the planets, their moons, and the vast asteroid belts, all from the comfort of your screen.
+This project is a comprehensive representation of our solar system with NEOs, bringing together realistic modeling, advanced visual effects, and interactive features. Explore the planets, their moons, the vast majority of asteroids and meteorite impact stimulation, all from the comfort of your screen.
 
 ## License
 
 This project is licensed under the [MIT License](./LICENSE).
-
-Feel free to contribute, suggest improvements, or use this project as a foundation for your own THREE.js experiments. Happy exploring!
