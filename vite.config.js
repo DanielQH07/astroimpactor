@@ -3,7 +3,6 @@ import { resolve } from 'path'
 
 export default defineConfig({
   root: '.', // gốc là project
-  publicDir: 'src',
   base: './',
   server: {
     host: true,
