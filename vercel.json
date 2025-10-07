@@ -1,0 +1,15 @@
+{
+  "builds": [
+    {
+      "src": "vite.config.js",
+      "use": "@vercel/static-build",
+      "config": { "distDir": "dist" }
+    }
+  ],
+  "routes": [
+    { "src": "/", "dest": "/index.html" },
+    { "src": "/src/index.html", "dest": "/index.html" },
+    { "src": "/test/globe.html", "dest": "/globe.html" },
+    { "src": "/Defense/earth.html", "dest": "/earth.html" }
+  ]
+}
