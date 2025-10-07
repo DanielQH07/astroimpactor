@@ -1,15 +1,10 @@
 {
-  "builds": [
-    {
-      "src": "vite.config.js",
-      "use": "@vercel/static-build",
-      "config": { "distDir": "dist" }
-    }
-  ],
-  "routes": [
-    { "src": "/", "dest": "/index.html" },
-    { "src": "/src/index.html", "dest": "/index.html" },
-    { "src": "/test/globe.html", "dest": "/globe.html" },
-    { "src": "/Defense/earth.html", "dest": "/earth.html" }
+  "buildCommand": "vite build",
+  "outputDirectory": "dist",
+  "rewrites": [
+    { "source": "/", "destination": "/index.html" },
+    { "source": "/src/index.html", "destination": "/index.html" },
+    { "source": "/test/globe.html", "destination": "/globe.html" },
+    { "source": "/Defense/earth.html", "destination": "/earth.html" }
   ]
 }
