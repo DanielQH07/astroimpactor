@@ -1,10 +1,11 @@
 import { defineConfig } from 'vite'
 import { resolve } from 'path'
+import { viteStaticCopy } from 'vite-plugin-static-copy'
 
 export default defineConfig({
   root: '.', // gốc là project
-  publicDir: 'src', // thư mục chứa static assets
-  base: './', // quan trọng khi deploy lên static hosting
+  publicDir: "src/", // ❌ Không cần static/
+  base: './', // dùng đường dẫn tương đối để chạy cả local + vercel
   server: {
     host: true,
     open: '/src/index.html', // mở mặc định khi dev
@@ -22,10 +23,24 @@ export default defineConfig({
       },
     },
   },
+  plugins: [
+    viteStaticCopy({
+      targets: [
+        // ✅ Copy toàn bộ thư mục Defense (ảnh + glb) sang dist/Defense
+        { src: 'Defense/**/*', dest: 'Defense' },
+        // ✅ Copy ảnh từ src/images sang dist/src/images
+        { src: 'src/images/**/*', dest: 'src/images' },
+        // ✅ Copy data JSON (nếu bạn dùng)
+        { src: 'src/data/**/*', dest: 'src/data' },
+      ],
+    }),
+  ],
   resolve: {
     alias: {
       '/images': resolve(__dirname, 'src/images'),
-      '/data': resolve(__dirname, 'src/data'), // map /data → src/data
+      '/data': resolve(__dirname, 'src/data'),
+      '/Defense': resolve(__dirname, 'Defense'),
     },
   },
+  assetsInclude: ['**/*.glb', '**/*.gltf', '**/*.hdr', '**/*.png', '**/*.jpg'],
 })
