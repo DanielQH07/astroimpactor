@@ -3,10 +3,11 @@ import { resolve } from 'path'
 
 export default defineConfig({
   root: '.', // gốc là project
-  base: './',
+  publicDir: 'src', // thư mục chứa static assets
+  base: './', // quan trọng khi deploy lên static hosting
   server: {
     host: true,
-    open: '/src/index.html' // mở mặc định src/index.html khi dev
+    open: '/src/index.html', // mở mặc định khi dev
   },
   build: {
     target: 'esnext',
@@ -17,16 +18,14 @@ export default defineConfig({
       input: {
         main: resolve(__dirname, 'src/index.html'),
         globe: resolve(__dirname, 'test/globe.html'),
-        defense: resolve(__dirname, 'Defense/earth.html')
-      }
-    }
+        defense: resolve(__dirname, 'Defense/earth.html'),
+      },
+    },
   },
-  // ⚡️ Thêm phần này
   resolve: {
     alias: {
       '/images': resolve(__dirname, 'src/images'),
-    '/data': resolve(__dirname, 'src/data'), // ✅ map /data → src/data
-
-    }
-  }
+      '/data': resolve(__dirname, 'src/data'), // map /data → src/data
+    },
+  },
 })
